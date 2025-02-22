@@ -3,7 +3,6 @@ import { AsyncComputed, asyncComputed } from './asyncComputed';
 import { AsyncEffect, asyncEffect } from './asyncEffect';
 import { asyncCheckDirty } from './asyncSystem';
 import { computedArray } from './computedArray';
-import { computedSet } from './computedSet';
 import { EqualityComputed, equalityComputed } from './equalityComputed';
 
 export const unstable: {
@@ -13,7 +12,6 @@ export const unstable: {
   asyncEffect: typeof asyncEffect;
   asyncCheckDirty: typeof asyncCheckDirty;
   computedArray: typeof computedArray;
-  computedSet: typeof computedSet;
   EqualityComputed: typeof EqualityComputed;
   equalityComputed: typeof equalityComputed;
 } = {
@@ -23,7 +21,6 @@ export const unstable: {
   asyncEffect,
   asyncCheckDirty,
   computedArray,
-  computedSet,
   EqualityComputed,
   equalityComputed,
 };

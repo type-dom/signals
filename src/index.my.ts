@@ -9,4 +9,3 @@ export * as unstable from './unstable/index';
 
 export * from './lib';
 
-export { testReactive } from '../reactivity/example'

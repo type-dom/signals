@@ -1,5 +1,5 @@
 export default {
-    title: 'My Lib',
+    title: 'Signals',
     themeConfig: {
         nav: [{ text: 'Guide', link: '/guide' }],
         sidebar: [
