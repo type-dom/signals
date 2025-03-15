@@ -1,9 +1,9 @@
-import { isEqual } from 'lodash';
-import { AnyFn, isFunction, isObject } from '@type-dom/utils';
+// import { isEqual } from 'lodash';
+import { AnyFn, isEqual, isFunction, isObject } from '@type-dom/utils';
 import { effect } from '../effect';
 import { Signal } from '../signal';
 import { Computed } from '../computed';
-import { isRef, Ref, toRaw } from './ref';
+import { isRef, toRaw, Ref } from './ref';
 
 // export function watch<T>(getter: () => T, callback: (newValue: T, oldValue?: T) => void, options?: IWatchOptions): Effect<void> {
 //   let oldValue: T = getter();

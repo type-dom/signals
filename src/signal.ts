@@ -1,7 +1,7 @@
+import { isArray, isBoolean, isNumber, isObject, isString, isUndefined } from '@type-dom/utils';
 import { batchDepth } from './batch';
 import { activeSub } from './effect';
 import { IDependency, ILink, processEffectNotifications, link, propagate } from './system';
-import { isArray, isBoolean, isNumber, isObject, isString, isUndefined } from 'lodash';
 
 export function signal<T>(): Signal<T>;
 export function signal<T>(oldValue: T): Signal<T>;

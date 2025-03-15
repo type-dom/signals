@@ -1,6 +1,6 @@
 {
   "name": "@type-dom/signals",
-  "version": "0.0.1",
+  "version": "0.3.0",
   "scripts": {
     "build": "rollup -c",
     "watch": "rollup -c -w",
@@ -40,7 +40,6 @@
     "vitepress": "^1.6.3"
   },
   "dependencies": {
-    "@type-dom/utils": "^0.0.14",
-    "lodash": "^4.17.21"
+    "@type-dom/utils": "^0.1.0"
   }
 }

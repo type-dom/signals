@@ -1,5 +1,5 @@
-import { activeSub, IEffect, notifyEffect, setActiveSub } from './effect';
 import { IComputed } from './computed';
+import { activeSub, IEffect, notifyEffect, setActiveSub } from './effect';
 import { IEffectScope, notifyEffectScope } from './effectScope';
 
 export interface IDependency {
