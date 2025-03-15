@@ -3,7 +3,7 @@
 <p>
 
 <p align="center">
-	<a href="https://npmjs.com/package/alien-signals"><img src="https://badgen.net/npm/v/alien-signals" alt="npm package"></a>
+	<a href="https://npmjs.com/package/@type-dom/signals"><img src="https://badgen.net/npm/v/@type-dom/signals" alt="npm package"></a>
 </p>
 
 <h3 align="center">
@@ -92,25 +92,26 @@ This results in code that is difficult to understand, and you don't necessarily 
 #### `propagate`
 
 ```ts
-export function propagate(link: Link, targetFlag: SubscriberFlags = SubscriberFlags.Dirty): void {
+function propagate(link: Link, targetFlag = SubscriberFlags.Dirty): void {
 	do {
 		const sub = link.sub;
 		const subFlags = sub.flags;
 
 		if (
 			(
-				!(subFlags & (SubscriberFlags.Tracking | SubscriberFlags.Recursed | SubscriberFlags.InnerEffectsPending | SubscriberFlags.ToCheckDirty | SubscriberFlags.Dirty))
-				&& (sub.flags = subFlags | targetFlag, true)
+				!(subFlags & (SubscriberFlags.Tracking | SubscriberFlags.Recursed | SubscriberFlags.Propagated))
+				&& (sub.flags = subFlags | targetFlag | SubscriberFlags.Notified, true)
 			)
 			|| (
-				(subFlags & (SubscriberFlags.Tracking | SubscriberFlags.Recursed)) === SubscriberFlags.Recursed
-				&& (sub.flags = (subFlags & ~SubscriberFlags.Recursed) | targetFlag, true)
+				(subFlags & SubscriberFlags.Recursed)
+				&& !(subFlags & SubscriberFlags.Tracking)
+				&& (sub.flags = (subFlags & ~SubscriberFlags.Recursed) | targetFlag | SubscriberFlags.Notified, true)
 			)
 			|| (
-				!(subFlags & (SubscriberFlags.InnerEffectsPending | SubscriberFlags.ToCheckDirty | SubscriberFlags.Dirty))
+				!(subFlags & SubscriberFlags.Propagated)
 				&& isValidLink(link, sub)
 				&& (
-					sub.flags = subFlags | SubscriberFlags.Recursed | targetFlag,
+					sub.flags = subFlags | SubscriberFlags.Recursed | targetFlag | SubscriberFlags.Notified,
 					(sub as Dependency).subs !== undefined
 				)
 			)
@@ -119,57 +120,60 @@ export function propagate(link: Link, targetFlag: SubscriberFlags = SubscriberFl
 			if (subSubs !== undefined) {
 				propagate(
 					subSubs,
-					'notify' in sub
-						? SubscriberFlags.InnerEffectsPending
-						: SubscriberFlags.ToCheckDirty
+					subFlags & SubscriberFlags.Effect
+						? SubscriberFlags.PendingEffect
+						: SubscriberFlags.PendingComputed
 				);
-			} else if ('notify' in sub) {
+			} else if (subFlags & SubscriberFlags.Effect) {
 				if (queuedEffectsTail !== undefined) {
-					queuedEffectsTail.nextNotify = sub;
+					queuedEffectsTail.depsTail!.nextDep = sub.deps;
+				} else {
+					queuedEffects = sub;
+				}
+				queuedEffectsTail = sub;
+			}
+		} else if (!(subFlags & (SubscriberFlags.Tracking | targetFlag))) {
+			sub.flags = subFlags | targetFlag | SubscriberFlags.Notified;
+			if ((subFlags & (SubscriberFlags.Effect | SubscriberFlags.Notified)) === SubscriberFlags.Effect) {
+				if (queuedEffectsTail !== undefined) {
+					queuedEffectsTail.depsTail!.nextDep = sub.deps;
 				} else {
 					queuedEffects = sub;
 				}
 				queuedEffectsTail = sub;
 			}
 		} else if (
-			!(subFlags & (SubscriberFlags.Tracking | targetFlag))
-			|| (
-				!(subFlags & targetFlag)
-				&& (subFlags & (SubscriberFlags.InnerEffectsPending | SubscriberFlags.ToCheckDirty | SubscriberFlags.Dirty))
-				&& isValidLink(link, sub)
-			)
+			!(subFlags & targetFlag)
+			&& (subFlags & SubscriberFlags.Propagated)
+			&& isValidLink(link, sub)
 		) {
 			sub.flags = subFlags | targetFlag;
 		}
 
 		link = link.nextSub!;
 	} while (link !== undefined);
-
-	if (targetFlag === SubscriberFlags.Dirty && !batchDepth) {
-		drainQueuedEffects();
-	}
 }
 ```
 
 #### `checkDirty`
 
 ```ts
-export function checkDirty(link: Link): boolean {
+function checkDirty(link: Link): boolean {
 	do {
 		const dep = link.dep;
-		if ('update' in dep) {
+		if ('flags' in dep) {
 			const depFlags = dep.flags;
-			if (depFlags & SubscriberFlags.Dirty) {
-				if (dep.update()) {
+			if ((depFlags & (SubscriberFlags.Computed | SubscriberFlags.Dirty)) === (SubscriberFlags.Computed | SubscriberFlags.Dirty)) {
+				if (updateComputed(dep)) {
 					const subs = dep.subs!;
 					if (subs.nextSub !== undefined) {
 						shallowPropagate(subs);
 					}
 					return true;
 				}
-			} else if (depFlags & SubscriberFlags.ToCheckDirty) {
+			} else if ((depFlags & (SubscriberFlags.Computed | SubscriberFlags.PendingComputed)) === (SubscriberFlags.Computed | SubscriberFlags.PendingComputed)) {
 				if (checkDirty(dep.deps!)) {
-					if (dep.update()) {
+					if (updateComputed(dep)) {
 						const subs = dep.subs!;
 						if (subs.nextSub !== undefined) {
 							shallowPropagate(subs);
@@ -177,7 +181,7 @@ export function checkDirty(link: Link): boolean {
 						return true;
 					}
 				} else {
-					dep.flags = depFlags & ~SubscriberFlags.ToCheckDirty;
+					dep.flags = depFlags & ~SubscriberFlags.PendingComputed;
 				}
 			}
 		}
@@ -187,12 +191,3 @@ export function checkDirty(link: Link): boolean {
 	return false;
 }
 ```
-
-## Roadmap
-
-| Version | Savings                                                                                       |
-|---------|-----------------------------------------------------------------------------------------------|
-| 0.3     | Satisfy all 4 constraints                                                                     |
-| 0.2     | Correctly schedule computed side effects                                                      |
-| 0.1     | Correctly schedule inner effect callbacks                                                     |
-| 0.0     | Add APIs: `signal()`, `computed()`, `effect()`, `effectScope()`, `startBatch()`, `endBatch()` |

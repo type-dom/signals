@@ -1,9 +1,9 @@
 import { isEqual } from 'lodash';
-import { isArray, isFunction, isObject } from '@type-dom/utils';
-import { Effect, effect } from '../effect';
+import { AnyFn, isFunction, isObject } from '@type-dom/utils';
+import { effect } from '../effect';
 import { Signal } from '../signal';
 import { Computed } from '../computed';
-import { isRef, toRaw, unref } from './ref';
+import { isRef, Ref, toRaw } from './ref';
 
 // export function watch<T>(getter: () => T, callback: (newValue: T, oldValue?: T) => void, options?: IWatchOptions): Effect<void> {
 //   let oldValue: T = getter();
@@ -32,14 +32,14 @@ import { isRef, toRaw, unref } from './ref';
 //   });
 // }
 
-export type WatchSource<T> = (() => T) | Signal<T> | Computed<T>;
+export type WatchSource<T> = (() => T) | Ref<T>;
 export type WatchCallback<T> = (newValue: T, oldValue?: T) => void;
 export type WatchStopHandle = () => void;
 
 export interface WatchOptions {
   immediate?: boolean;
   deep?: boolean;
-  flush?: 'pre' | 'post' | 'sync';
+  flush?: 'pre' | 'post' | 'sync'; // post = after DOM update
 }
 
 export function watch<T>(
@@ -58,14 +58,16 @@ export function watch<T>(
   if (isFunction(source)) {
     getter = source;
   } else if (isRef(source)) {
-    getter = () => source.get();
+    getter = () => source.get() as T;
   } else {
     throw new Error('Invalid watch source');
   }
 
   const job = () => {
     newValue = getter();
-
+    if (newValue instanceof Map) {
+      console.warn('newValue is ', newValue);
+    }
     // 深度比较对象
     if (options.deep && isObject(newValue) && isObject(oldValue)) {
       newValue = toRaw(newValue);
@@ -80,24 +82,33 @@ export function watch<T>(
     }
   };
 
-  // const scheduler = (run: () => void) => {
-  //   if (cleanup) {
-  //     cleanup();
-  //   }
-  //   cleanup = options.onInvalidate?.(() => {
-  //     cleanup = null;
-  //   });
-  //
-  //   if (options.flush === 'post') {
-  //     queuePostRenderEffect(run);
-  //   } else if (options.flush === 'sync') {
-  //     run();
-  //   } else {
-  //     queueMicrotask(run);
-  //   }
-  // };
+  const scheduler = (run: () => void) => {
+    // if (cleanup) {
+    //   cleanup();
+    // }
+    // cleanup = options.onInvalidate?.(() => {
+    //   cleanup = null;
+    // });
 
-  const runner = effect(job);
+    if (options.flush === 'post') {
+      queuePostRenderEffect(run);
+    } else if (options.flush === 'sync') {
+      run();
+    } else {
+      queueMicrotask(run);
+    }
+  };
+
+  const stop = effect(job);
+  // const stop = effect(() => {
+  //   if (options.flush === 'post') {
+  //     queuePostRenderEffect(effect(job));
+  //   } else if (options.flush === 'sync') {
+  //     job();
+  //   } else {
+  //     queueMicrotask(effect(job));
+  //   }
+  // })
   // const runner = effect(job, {
   //   lazy: true,
   //   onTrack() {},
@@ -111,19 +122,11 @@ export function watch<T>(
   } else {
     oldValue = getter();
   }
-
-  // return runner;
-  return () => {
-    runner.stop();
-    // stop(runner);
-    // if (cleanup) {
-    //   cleanup();
-    // }
-  };
+  return stop;
 }
 
-// function queuePostRenderEffect(fn: Function) {
-//   // 这里应该有一个实际的渲染队列管理器
-//   // 为了简化，我们直接使用微任务队列
-//   queueMicrotask(fn);
-// }
+function queuePostRenderEffect(fn: AnyFn) {
+  // 这里应该有一个实际的渲染队列管理器
+  // 为了简化，我们直接使用微任务队列
+  queueMicrotask(fn);
+}

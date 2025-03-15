@@ -1,39 +1,83 @@
 import { batchDepth } from './batch';
 import { activeSub } from './effect';
-import { IDependency, ILink, drainQueuedEffects, link, propagate } from './system';
-import type { IWritableSignal } from './types';
+import { IDependency, ILink, processEffectNotifications, link, propagate } from './system';
+import { isArray, isBoolean, isNumber, isObject, isString, isUndefined } from 'lodash';
 
-export function signal<T>(): Signal<T | undefined>;
+export function signal<T>(): Signal<T>;
 export function signal<T>(oldValue: T): Signal<T>;
-export function signal<T>(oldValue?: T): Signal<T | undefined> {
+export function signal<T>(oldValue?: T): Signal<T> {
 	return new Signal(oldValue);
 }
 
-export class Signal<T = any> implements IDependency, IWritableSignal<T> {
+export interface ISignal<T = unknown> extends IDependency {
+	currentValue?: T;
+}
+
+export class Signal<T = unknown> implements ISignal<T> {
+	currentValue?: T;
 	// Dependency
-	subs: ILink | undefined = undefined;
-	subsTail: ILink | undefined = undefined;
+	subs?: ILink ;
+	subsTail?: ILink;
 
-	constructor(
-		public currentValue: T
-	) { }
+	constructor(oldValue?: T) {
+		this.currentValue = oldValue;
+		// this.subs = undefined;
+		// this.subsTail = undefined;
+	}
 
-	get(): T {
+	get() {
 		if (activeSub !== undefined) {
 			link(this, activeSub);
 		}
-		return this.currentValue;
+		return this.currentValue as T;
 	}
 
+	/**
+	 * 设置值
+	 * 如果值跟原来一样，不会触发更新
+	 * todo: 优化，如果值是对象或数组这种引用类型，内部值可能变了，却没有触发更新
+	 * 		触发更新的规则如何设定？？？
+	 * @param value
+	 */
 	set(value: T): void {
-		if (this.currentValue !== value) {
-			this.currentValue = value;
-			const subs = this.subs;
-			if (subs !== undefined) {
-				propagate(subs);
-				if (!batchDepth) {
-					drainQueuedEffects();
+		// console.warn('signal set value is ', value);
+		if (this.currentValue !== (this.currentValue = value)) {
+			this.notify();
+		} else {
+			if (isUndefined(value)) {
+				// console.error('undefined same value, ', value);
+			} else if (isString(value)) {
+				// console.error('string same value, ', value);
+			} else if (isNumber(value)) {
+				// console.error('number same value, ', value);
+			} else if (isBoolean(value)) {
+				// console.error('boolean same value, ', value);
+			} else if (isArray(value)) { // 数组的话，内部值可能变了，但是引用没变，所以触发更新
+				// todo 是否需要深度比对 ？？？
+				console.error('array, same value, ', value);
+				this.notify();
+			} else if (isObject(value)) { // 对象的话，内部值可能变了，但是引用没变，所以触发更新
+				// todo 是否需要深度比对 ？？？
+				this.notify();
+				if (value instanceof Element) {
+				// 	nothing
+				} else if (value instanceof Map) {
+					// console.error('Map same value, ', value);
+				} else {
+					// console.error('object same value, ', value);
 				}
+			} else {
+				console.error('other type, same value, ', value, ' type is ', typeof value);
+			}
+		}
+	}
+
+	notify() {
+		const subs = this.subs;
+		if (subs !== undefined) {
+			propagate(subs);
+			if (!batchDepth) {
+				processEffectNotifications();
 			}
 		}
 	}

@@ -1,4 +1,3 @@
-import { hasOwn } from '@type-dom/utils';
 
 export * from './watch';
 

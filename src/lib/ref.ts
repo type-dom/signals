@@ -6,7 +6,7 @@ import { signal, Signal } from '../signal';
 // https://stackoverflow.com/questions/49927523/disallow-call-with-any/49928360#49928360
 export type IfAny<T, Y, N> = 0 extends 1 & T ? Y : N;
 
-export type Ref<T = any> = Signal<T> | Computed<T>;
+export type Ref<T> = Signal<T> | Computed<T>;
 
 /**
  * Checks if a value is a ref object.
@@ -14,13 +14,22 @@ export type Ref<T = any> = Signal<T> | Computed<T>;
  * @param r - The value to inspect.
  * @see {@link https://vuejs.org/api/reactivity-utilities.html#isref}
  */
-export function isRef<T = any>(r: Ref<T> | T): r is Ref<T> {
-  return r instanceof Signal || r instanceof Computed;
+export function isRef<T>(r: unknown): r is Signal<T> | Computed<T> {
+  return isComputed(r) || isSignal(r) ;
 }
+export function isSignal<T, S>(r: MaybeRef<T>): r is Signal<T> {
+  return r instanceof Signal;
+}
+export function isComputed<T>(r: MaybeRef<T>): r is Computed<T> {
+  return r instanceof Computed;
+}
+export type MaybeRef<T = unknown> = T | Ref<T>;
+  // | ShallowRef<T>
+  // | WritableComputedRef<T>
+// export type MaybeRef<T = any> = T | Signal<T> | Computed; // todo optimize Computed不能加 T， 否则会报错
 
-export type MaybeRef<T = any> = T | Signal<T> | Computed; // todo optimize Computed不能加 T， 否则会报错
-
-export type MaybeRefOrGetter<T = any> = MaybeRef<T> | (() => T)
+// export type MaybeRefOrGetter<T = any> = MaybeRef<T> | ComputedRef<T> | (() => T)
+export type MaybeRefOrGetter<T = unknown> = T | Signal<T> | Computed<T> | (() => T) // todo optimize Computed不能加 T， 否则会报错
 
 /**
  * Returns the inner value if the argument is a ref, otherwise return the
@@ -39,38 +48,41 @@ export type MaybeRefOrGetter<T = any> = MaybeRef<T> | (() => T)
  * @see {@link https://vuejs.org/api/reactivity-utilities.html#unref}
  */
 export function unref<T>(ref: MaybeRef<T>): T {
-  if (isRef(ref)) {
-    return ref.get()
-  }
-  return ref as T;
-  //  数组/对象 在业务中自己处理
-  // if (isArray(ref)) {
-  //   const rawArr: any[] = []; // 不要破坏原始值
-  //   // todo slot 会为空
-  //   //     不变的化，class 类的监听，会改变 原始值，再次触发时会 effect 无法监听；
-  //   ref.forEach((r) => {
-  //     if (isRef(r)) {
-  //       rawArr.push(unref(r));
-  //     } else {
-  //       rawArr.push(unref(r));
-  //     }
-  //   });
-  //   return rawArr  as T;
-  // } else if (isObject(ref)) {
-  //   const record = {} as Record<string, unknown>;  // 不要破坏原始值
-  //   for (const key in ref) {
-  //     if (isRef(ref[key])) {
-  //       record[key] = unref(ref[key])
-  //     }
-  //   }
-  //   return record as T
-  // } else {
-  //   return ref as T
-  // }
+  return isRef(ref) ? ref.get() : ref;
 }
+// export function unref<T>(ref: MaybeRef<T>): T {
+//   if (isRef(ref)) {
+//     return ref.get()
+//   }
+//   return ref as T;
+//   //  数组/对象 在业务中自己处理
+//   // if (isArray(ref)) {
+//   //   const rawArr: any[] = []; // 不要破坏原始值
+//   //   // todo slot 会为空
+//   //   //     不变的化，class 类的监听，会改变 原始值，再次触发时会 effect 无法监听；
+//   //   ref.forEach((r) => {
+//   //     if (isRef(r)) {
+//   //       rawArr.push(unref(r));
+//   //     } else {
+//   //       rawArr.push(unref(r));
+//   //     }
+//   //   });
+//   //   return rawArr  as T;
+//   // } else if (isObject(ref)) {
+//   //   const record = {} as Record<string, unknown>;  // 不要破坏原始值
+//   //   for (const key in ref) {
+//   //     if (isRef(ref[key])) {
+//   //       record[key] = unref(ref[key])
+//   //     }
+//   //   }
+//   //   return record as T
+//   // } else {
+//   //   return ref as T
+//   // }
+// }
 
 
-export type ToRef<T> = IfAny<T, Ref<T>, [T] extends [Ref] ? T : Ref<T>>
+export type ToRef<T> = IfAny<T, Ref<T>, [T] extends [Ref<T>] ? T : Ref<T>>
 
 export type ToSignal<T> = IfAny<T, Signal<T>, [T] extends [Signal] ? T : Signal<T>>
 /**
@@ -120,7 +132,7 @@ export function toRef<T>(
   value: T,
 ): T extends () => infer R
   ? Readonly<Ref<R>>
-  : T extends Ref
+  : T extends Ref<T>
     ? T
     : Ref<T>
 export function toRef<T extends object, K extends keyof T>(
@@ -137,7 +149,7 @@ export function toRef(
   source: Record<string, any> | MaybeRef,
   key?: string,
   defaultValue?: unknown,
-): Ref {
+): Ref<any> {
   if (isRef(source)) {
     return source
   } else if (isFunction(source)) {
@@ -175,8 +187,8 @@ export type ToSignals<T = any> = {
 }
 
 export type ToRefs<T = any> = {
-  [K in keyof T]: ToRef<T[K]>
-  // [K in keyof T]: T[K] extends Ref ? T[K] : Ref<T[K]>;
+  // [K in keyof T]: ToRef<T[K]>
+  [K in keyof T]: T[K] extends Ref<T[K]> ? T[K] : Ref<T[K]>;
 }
 export const toSignal = propertyToSignal;
 
@@ -230,7 +242,7 @@ export function toSignals<T extends Record<string, IPrimitive | IPrimitive[]>>(o
  *
  * @param observed - The object for which the "raw" value is requested.
  */
-export function toRaw<T>(observed: MaybeRef<T>): T {
+export function toRaw<T = any>(observed?: MaybeRef<T | undefined>): T {
   // computed 返回 false 时会死循环；
   // const raw = isRef(observed) && observed.get();
   // if (isArray(observed)) {
@@ -252,7 +264,7 @@ export function toRaw<T>(observed: MaybeRef<T>): T {
   if (isRef(observed)) {
     return toRaw(observed.get()); // 递归求原数据
   } else {
-    return observed;
+    return observed as T;
   }
 }
 

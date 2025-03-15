@@ -1,62 +1,73 @@
-import { endTrack, ILink, ISubscriber, runInnerEffects, startTrack, SubscriberFlags } from './system';
+import { effectStop } from './effect';
+import {
+	endTracking,
+	processPendingInnerEffects,
+	startTracking,
+	ILink,
+	ISubscriber,
+	SubscriberFlags,
+} from './system';
 
-export let activeEffectScope: EffectScope | undefined = undefined;
-
-export function untrackScope<T>(fn: () => T): T {
-	const prevSub = activeEffectScope;
-	setActiveScope(undefined);
-	try {
-		return fn();
-	} finally {
-		setActiveScope(prevSub);
-	}
-}
+export let activeScope: EffectScope | undefined = undefined;
 
 export function setActiveScope(sub: EffectScope | undefined): void {
-	activeEffectScope = sub;
+	activeScope = sub;
 }
 
-export function effectScope(): EffectScope {
-	return new EffectScope();
+export function effectScope<T>(fn: () => T) {
+	const e = new EffectScope();
+	runEffectScope(e, fn);
+	return effectStop.bind(e);
 }
 
-export class EffectScope implements ISubscriber {
+export interface IEffectScope extends ISubscriber {
+	isScope: true;
+}
+
+export class EffectScope implements IEffectScope {
 	// Subscriber
-	deps: ILink | undefined = undefined;
-	depsTail: ILink | undefined = undefined;
-	flags: SubscriberFlags = SubscriberFlags.None;
+	deps: ILink | undefined;
+	depsTail: ILink | undefined;
+	flags: SubscriberFlags;
+	isScope: true;
 
 	/**
 	 * @internal add by me to support onScopeDispose
 	 */
 	cleanups: (() => void)[] = []
 
-	notify(): void {
-		const flags = this.flags;
-		if (flags & SubscriberFlags.InnerEffectsPending) {
-			this.flags = flags & ~SubscriberFlags.InnerEffectsPending;
-			runInnerEffects(this.deps!);
-		}
+	constructor() {
+		this.deps = undefined;
+		this.depsTail = undefined;
+		this.flags = SubscriberFlags.Effect;
+		this.isScope = true;
 	}
+	// notify(): void {
+	// 	const flags = this.flags;
+	// 	if (flags & SubscriberFlags.InnerEffectsPending) {
+	// 		this.flags = flags & ~SubscriberFlags.InnerEffectsPending;
+	// 		runInnerEffects(this.deps!);
+	// 	}
+	// }
+	//
+	// run<T>(fn: () => T): T {
+	// 	const prevSub = activeScope;
+	// 	setActiveScope(this);
+	// 	try {
+	// 		return fn();
+	// 	} finally {
+	// 		setActiveScope(prevSub);
+	// 	}
+	// }
 
-	run<T>(fn: () => T): T {
-		const prevSub = activeEffectScope;
-		setActiveScope(this);
-		try {
-			return fn();
-		} finally {
-			setActiveScope(prevSub);
-		}
-	}
-
-	stop(): void {
-		for (let i = 0, l = this.cleanups.length; i < l; i++) {
-			this.cleanups[i]()
-		}
-		this.cleanups.length = 0
-		startTrack(this);
-		endTrack(this);
-	}
+	// stop(): void {
+	// 	for (let i = 0, l = this.cleanups.length; i < l; i++) {
+	// 		this.cleanups[i]()
+	// 	}
+	// 	this.cleanups.length = 0
+	// 	startTracking(this);
+	// 	endTracking(this);
+	// }
 }
 
 
@@ -66,7 +77,7 @@ export class EffectScope implements ISubscriber {
  * @see {@link https://vuejs.org/api/reactivity-advanced.html#getcurrentscope}
  */
 export function getCurrentScope(): EffectScope | undefined {
-	return activeEffectScope
+	return activeScope
 }
 
 /**
@@ -78,8 +89,8 @@ export function getCurrentScope(): EffectScope | undefined {
  * @see {@link https://vuejs.org/api/reactivity-advanced.html#onscopedispose}
  */
 export function onScopeDispose(fn: () => void, failSilently = false): void {
-	if (activeEffectScope) {
-		activeEffectScope.cleanups.push(fn)
+	if (activeScope) {
+		activeScope.cleanups.push(fn)
 	}
 	else if (!failSilently) {
 		console.warn(
@@ -87,4 +98,25 @@ export function onScopeDispose(fn: () => void, failSilently = false): void {
 			` to be associated with.`,
 		)
 	}
+}
+
+export function runEffectScope(e: EffectScope, fn: () => void): void {
+	const prevSub = activeScope;
+	activeScope = e;
+	startTracking(e);
+	try {
+		fn();
+	} finally {
+		activeScope = prevSub;
+		endTracking(e);
+	}
+}
+
+export function notifyEffectScope(e: IEffectScope): boolean {
+	const flags = e.flags;
+	if (flags & SubscriberFlags.PendingEffect) {
+		processPendingInnerEffects(e, e.flags);
+		return true;
+	}
+	return false;
 }

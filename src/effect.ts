@@ -1,77 +1,91 @@
-import { activeEffectScope } from './effectScope';
-import { IDependency, IEffect, ILink, ISubscriber, SubscriberFlags, endTrack, isDirty, link, runInnerEffects, startTrack } from './system';
+import { activeScope } from './effectScope';
+import {
+	IDependency,
+	ILink,
+	ISubscriber,
+	SubscriberFlags,
+	link,
+	startTracking,
+	endTracking,
+	processPendingInnerEffects, updateDirtyFlag
+} from './system';
 
 export let activeSub: ISubscriber | undefined;
-
-export function untrack<T>(fn: () => T): T {
-	const prevSub = activeSub;
-	setActiveSub(undefined);
-	try {
-		return fn();
-	} finally {
-		setActiveSub(prevSub);
-	}
-}
 
 export function setActiveSub(sub: ISubscriber | undefined): void {
 	activeSub = sub;
 }
 
-export function effect<T>(fn: () => T): Effect<T> {
+export function effect<T>(fn: () => T) {
+	// console.warn('effect . fn is ', fn);
 	const e = new Effect(fn);
-	e.run();
-	return e;
+
+	if (activeSub !== undefined) {
+		link(e, activeSub);
+	} else if (activeScope !== undefined) {
+		link(e, activeScope);
+	}
+	runEffect(e);
+	return effectStop.bind(e);
 }
 
-export class Effect<T = any> implements IEffect, IDependency {
+export interface IEffect extends ISubscriber, IDependency  {
+	fn(): void;
+}
+
+export class Effect<T = any> implements IEffect {
+	fn: () => T;
 	// Dependency
-	subs: ILink | undefined = undefined;
-	subsTail: ILink | undefined = undefined;
+	subs: ILink | undefined ;
+	subsTail: ILink | undefined;
 
 	// Subscriber
-	deps: ILink | undefined = undefined;
-	depsTail: ILink | undefined = undefined;
-	flags: SubscriberFlags = SubscriberFlags.Dirty;
+	deps: ILink | undefined;
+	depsTail: ILink | undefined;
+	flags: SubscriberFlags;
 
-	constructor(
-		public fn: () => T
-	) {
-		if (activeSub !== undefined) {
-			link(this, activeSub);
-		} else if (activeEffectScope !== undefined) {
-			link(this, activeEffectScope);
-		}
-	}
+	constructor(fn: () => T) {
+		this.fn = fn;
+		this.subs = undefined;
+		this.subsTail = undefined;
 
-	notify(): void {
-		const flags = this.flags;
-		if (
-			flags & (SubscriberFlags.ToCheckDirty | SubscriberFlags.Dirty)
-			&& isDirty(this, flags)
-		) {
-			this.run();
-			return;
-		}
-		if (flags & SubscriberFlags.InnerEffectsPending) {
-			this.flags = flags & ~SubscriberFlags.InnerEffectsPending;
-			runInnerEffects(this.deps!);
-		}
-	}
-
-	run(): T {
-		const prevSub = activeSub;
-		setActiveSub(this);
-		startTrack(this);
-		try {
-			return this.fn();
-		} finally {
-			setActiveSub(prevSub);
-			endTrack(this);
-		}
-	}
-
-	stop(): void {
-		startTrack(this);
-		endTrack(this);
+		// Subscriber
+		this.deps = undefined;
+		this.depsTail = undefined;
+		this.flags = SubscriberFlags.Effect;
 	}
 }
+
+//#region Internal functions
+function runEffect(e: IEffect): void {
+	// console.warn('runEffect . e is ', e);
+	const prevSub = activeSub;
+	activeSub = e;
+	startTracking(e);
+	try {
+		e.fn();
+	} finally {
+		activeSub = prevSub;
+		endTracking(e);
+	}
+}
+
+export function notifyEffect(e: IEffect): boolean {
+	const flags = e.flags;
+	if (
+		flags & SubscriberFlags.Dirty
+		|| (flags & SubscriberFlags.PendingComputed && updateDirtyFlag(e, flags))
+	) {
+		runEffect(e);
+	} else {
+		processPendingInnerEffects(e, e.flags);
+	}
+	return true;
+}
+
+export function effectStop(this: ISubscriber): void {
+	// console.warn('effectStop . ');
+	startTracking(this);
+	endTracking(this);
+}
+//#endregion
