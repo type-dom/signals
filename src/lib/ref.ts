@@ -6,7 +6,7 @@ import { signal, Signal } from '../signal';
 // https://stackoverflow.com/questions/49927523/disallow-call-with-any/49928360#49928360
 export type IfAny<T, Y, N> = 0 extends 1 & T ? Y : N;
 
-export type Ref<T> = Signal<T> | Computed<T>;
+export type Ref<T = unknown> = Signal<T> | Computed<T>;
 
 /**
  * Checks if a value is a ref object.
@@ -14,10 +14,10 @@ export type Ref<T> = Signal<T> | Computed<T>;
  * @param r - The value to inspect.
  * @see {@link https://vuejs.org/api/reactivity-utilities.html#isref}
  */
-export function isRef<T>(r: unknown): r is Signal<T> | Computed<T> {
-  return isComputed(r) || isSignal(r) ;
+export function isRef<T>(r: unknown): r is Ref<T> {
+  return  r instanceof Signal || r instanceof Computed ;
 }
-export function isSignal<T, S>(r: MaybeRef<T>): r is Signal<T> {
+export function isSignal<T>(r: MaybeRef<T>): r is Signal<T> {
   return r instanceof Signal;
 }
 export function isComputed<T>(r: MaybeRef<T>): r is Computed<T> {

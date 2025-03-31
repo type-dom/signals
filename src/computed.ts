@@ -5,7 +5,8 @@ import {
 	SubscriberFlags, ISubscriber,
 	link,
 	propagate,
-	processEffectNotifications, processComputedUpdate
+	processEffectNotifications,
+	processComputedUpdate
 } from './system';
 import { ISignal } from './signal';
 import { batchDepth } from './batch';
@@ -14,12 +15,12 @@ import { batchDepth } from './batch';
 export type ComputedGetter<T, S> = (cachedValue?: S) => T;
 export type ComputedSetter<T> = (newValue: T) => void;
 
-export function computed<T>(getter: (cachedValue?: any) => T, setter?: (newValue: any) => void): Computed<T> {
+export function computed<T>(getter: (previousValue?: any) => T, setter?: (newValue: any) => void): Computed<T> {
 	return new Computed(getter, setter);
 }
 
 export interface IComputed<T, S = T> extends ISignal<T | undefined>, ISubscriber {
-	getter: (cachedValue?: S) => T;
+	getter: (previousValue?: S) => T;
 	setter?: (newValue: S) => void;
 }
 

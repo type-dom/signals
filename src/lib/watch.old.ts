@@ -1,8 +1,10 @@
-import { isEqual } from 'lodash';
+// import { isEqual } from 'lodash';
 import { AnyFn, isFunction, isObject } from '@type-dom/utils';
 import { effect } from '../effect';
-import { Ref, isRef, toRaw } from './ref';
-// import { pauseTracking, resumeTracking } from '../untrack';
+import { computed } from '../computed';
+import { isRef, Ref, toRaw } from './ref';
+import { pauseTracking, resumeTracking } from '../untrack';
+import { isEqual } from 'lodash';
 
 export type WatchSource<T> = (() => T | undefined) | Ref<T | undefined>;
 export type WatchCallback<T> = (newValue: T, oldValue?: T) => void;
@@ -25,9 +27,7 @@ export function watch<T>(
   let getter: () => T | undefined;
   let oldValue: T | undefined;
   let newValue: T | undefined;
-  let isScheduled = false;
-  let isFirstRun = true;
-  const cleanupFns: (() => void)[] = [];
+  // let cleanup: (() => void) | null = null;
 
   if (isFunction(source)) {
     getter = source;
@@ -56,56 +56,49 @@ export function watch<T>(
         oldValue = newValue;
       }
     // })
-
-    isScheduled = false;
   };
 
   const scheduler: (run: () => void) => unknown = (run: () => void) => {
-    if (isScheduled) return;
-    isScheduled = true;
+    // if (cleanup) {
+    //   cleanup();
+    // }
+    // cleanup = options.onInvalidate?.(() => {
+    //   cleanup = null;
+    // });
+
     if (options.flush === 'post') {
       queuePostRenderEffect(run);
-    } else if (options.flush === 'pre') {
-      requestAnimationFrame(run);
+    } else if (options.flush === 'sync') {
+      run();
     } else {
+      // queueMicrotask(run);
       run();
     }
   };
 
-  const stopEffect = effect(() => {
-    // getter(); // 仅用于依赖收集
-    // if (isFirstRun) {
-    //   isFirstRun = false;
-    //   oldValue = getter();
-    //   // oldValue = options.deep ? deepClone(getter()) : getter();
-    //   // 如果设置了 immediate，在第一次运行前手动调用一次
-    //   // if (options.immediate) scheduler(job);
-    // } else {
-      scheduler(job);
-    // }
+  // const stop = effect(job);
+  const stop = effect(() => {
+    scheduler(job);
   })
+  // const runner = effect(job, {
+  //   lazy: true,
+  //   onTrack() {},
+  //   onTrigger() {},
+  //   scheduler
+  // });
+
   // 如果设置了 immediate，在第一次运行前手动调用一次
   if (options.immediate) {
-    scheduler(job);
+    job();
   } else {
     oldValue = getter();
   }
-  const stop = () => {
-    stopEffect();
-    cleanupFns.forEach(fn => fn());
-    cleanupFns.length = 0;
-  };
-
   return stop;
 }
 
 function queuePostRenderEffect(fn: AnyFn) {
   // 这里应该有一个实际的渲染队列管理器
   // 为了简化，我们直接使用微任务队列
-  if (typeof queueMicrotask === 'function') {
-    queueMicrotask(fn);
-  } else {
-    Promise.resolve().then(fn);
-  }
+  queueMicrotask(fn);
 }
 

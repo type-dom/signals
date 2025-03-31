@@ -1,4 +1,4 @@
-import { processEffectNotifications, ISubscriber } from './system';
+import { processEffectNotifications } from './system';
 
 export let batchDepth = 0;
 

@@ -16,7 +16,13 @@ export function setActiveScope(sub: EffectScope | undefined): void {
 
 export function effectScope<T>(fn: () => T) {
 	const e = new EffectScope();
-	runEffectScope(e, fn);
+	const prevSub = activeScope;
+	activeScope = e;
+	try {
+		fn();
+	} finally {
+		activeScope = prevSub;
+	}
 	return effectStop.bind(e);
 }
 
@@ -97,18 +103,6 @@ export function onScopeDispose(fn: () => void, failSilently = false): void {
 			`onScopeDispose() is called when there is no active effect scope` +
 			` to be associated with.`,
 		)
-	}
-}
-
-export function runEffectScope(e: EffectScope, fn: () => void): void {
-	const prevSub = activeScope;
-	activeScope = e;
-	startTracking(e);
-	try {
-		fn();
-	} finally {
-		activeScope = prevSub;
-		endTracking(e);
 	}
 }
 

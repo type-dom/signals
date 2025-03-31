@@ -7,7 +7,8 @@ import {
 	link,
 	startTracking,
 	endTracking,
-	processPendingInnerEffects, updateDirtyFlag
+	processPendingInnerEffects,
+	updateDirtyFlag
 } from './system';
 
 export let activeSub: ISubscriber | undefined;
@@ -25,7 +26,13 @@ export function effect<T>(fn: () => T) {
 	} else if (activeScope !== undefined) {
 		link(e, activeScope);
 	}
-	runEffect(e);
+	const prevSub = activeSub;
+	activeSub = e;
+	try {
+		e.fn();
+	} finally {
+		activeSub = prevSub;
+	}
 	return effectStop.bind(e);
 }
 
@@ -57,26 +64,21 @@ export class Effect<T = any> implements IEffect {
 }
 
 //#region Internal functions
-function runEffect(e: IEffect): void {
-	// console.warn('runEffect . e is ', e);
-	const prevSub = activeSub;
-	activeSub = e;
-	startTracking(e);
-	try {
-		e.fn();
-	} finally {
-		activeSub = prevSub;
-		endTracking(e);
-	}
-}
-
 export function notifyEffect(e: IEffect): boolean {
 	const flags = e.flags;
 	if (
 		flags & SubscriberFlags.Dirty
 		|| (flags & SubscriberFlags.PendingComputed && updateDirtyFlag(e, flags))
 	) {
-		runEffect(e);
+		const prevSub = activeSub;
+		activeSub = e;
+		startTracking(e);
+		try {
+			e.fn();
+		} finally {
+			activeSub = prevSub;
+			endTracking(e);
+		}
 	} else {
 		processPendingInnerEffects(e, e.flags);
 	}

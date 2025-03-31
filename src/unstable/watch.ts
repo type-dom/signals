@@ -364,4 +364,108 @@
 //     }
 //   }
 //   return value
+
 // }
+import { effect } from '../effect';
+
+type WatchOptions = {
+  immediate?: boolean;
+  deep?: boolean;
+  flush?: 'sync' | 'post' | 'pre';
+};
+
+export const watch = <T>(
+  getter: () => T,
+  callback: (newVal: T, oldVal: T | undefined) => void,
+  options: WatchOptions = {}
+): (() => void) => {
+  let oldValue: T;
+  let isFirstRun = true;
+  let isScheduled = false;
+  const cleanupFns: (() => void)[] = [];
+
+  // 深比较逻辑
+  const isChanged = (a: T, b: T | undefined): boolean => {
+    if (b === undefined) return true;
+    if (options.deep) return !deepEqual(a, b);
+    return !Object.is(a, b);
+  };
+
+  // 调度器
+  const schedule = () => {
+    if (isScheduled) return;
+    isScheduled = true;
+
+    const execute = () => {
+      const newValue = getter();
+      if (isChanged(newValue, oldValue)) {
+        const prevValue = oldValue;
+        oldValue = options.deep ? deepClone(newValue) : newValue;
+        callback(newValue, prevValue);
+      }
+      isScheduled = false;
+    };
+
+    switch (options.flush) {
+      case 'post':
+        queueTask(execute);
+        break;
+      case 'pre':
+        requestAnimationFrame(execute);
+        break;
+      default:
+        execute();
+    }
+  };
+
+  // 核心 effect
+  const stopEffect = effect(() => {
+    // 仅用于依赖收集
+    getter();
+
+    if (isFirstRun) {
+      isFirstRun = false;
+      oldValue = options.deep ? deepClone(getter()) : getter();
+      if (options.immediate) schedule();
+    } else {
+      schedule();
+    }
+  });
+
+  // 停止监听
+  const stop = () => {
+    stopEffect();
+    cleanupFns.forEach(fn => fn());
+    cleanupFns.length = 0;
+  };
+
+  return stop;
+};
+// 深克隆
+const deepClone = <T>(obj: T): T => {
+  return JSON.parse(JSON.stringify(obj));
+};
+
+// 深比较
+const deepEqual = (a: any, b: any): boolean => {
+  if (a === b) return true;
+  if (typeof a !== 'object' || a === null || typeof b !== 'object' || b === null) return false;
+
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+
+  for (const key of keysA) {
+    if (!deepEqual(a[key], b[key])) return false;
+  }
+  return true;
+};
+
+// 微任务队列
+const queueTask = (fn: () => void) => {
+  if (typeof queueMicrotask === 'function') {
+    queueMicrotask(fn);
+  } else {
+    Promise.resolve().then(fn);
+  }
+};

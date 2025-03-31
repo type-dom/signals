@@ -1,4 +1,4 @@
-
+export { reaction } from './reaction';
 export * from './watch';
 
 export * from './ref';

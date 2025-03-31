@@ -1,5 +1,5 @@
-import { IComputed } from './computed';
 import { activeSub, IEffect, notifyEffect, setActiveSub } from './effect';
+import { IComputed } from './computed';
 import { IEffectScope, notifyEffectScope } from './effectScope';
 
 export interface IDependency {
@@ -16,13 +16,14 @@ export interface ISubscriber {
 export interface ILink {
 	dep: IDependency | (IDependency & ISubscriber);
 	sub: ISubscriber | (IDependency & ISubscriber);
-	// Reuse to link prev stack in checkDirty
-	// Reuse to link prev stack in propagate
 	prevSub?: ILink;
 	nextSub?: ILink;
-	// Reuse to link next released link in linkPool
-	// Reuse to link notify effect in queuedEffects
 	nextDep?: ILink;
+}
+
+interface OneWayLink<T> {
+	target: T;
+	linked: OneWayLink<T> | undefined;
 }
 
 export const enum SubscriberFlags {
@@ -37,7 +38,9 @@ export const enum SubscriberFlags {
 	Propagated = Dirty | PendingComputed | PendingEffect,
 }
 
-export function createReactiveSystem({ updateComputed, notifyEffect
+export function createReactiveSystem({
+	updateComputed,
+	notifyEffect,
 }: {
 /**
 * Updates the computed subscriber's value and returns whether it changed.
@@ -63,284 +66,262 @@ updateComputed(computed: IDependency & ISubscriber): boolean;
 */
 notifyEffect(effect: ISubscriber): boolean;
 }) {
-	let queuedEffects: ISubscriber | undefined;
-	let queuedEffectsTail: ISubscriber | undefined;
+	const notifyBuffer: (ISubscriber | undefined)[] = [];
+
+	let notifyIndex = 0;
+	let notifyBufferLength = 0;
 
 	return {
-		/**
-		 * Links a given dependency and subscriber if they are not already linked.
-		 *
-		 * @param dep - The dependency to be linked.
-		 * @param sub - The subscriber that depends on this dependency.
-		 * @returns The newly created link object if the two are not already linked; otherwise `undefined`.
-		 */
-		link(dep: IDependency, sub: ISubscriber): ILink | undefined {
-			// console.warn('link method, dep is ', dep, ' sub', sub);
-			const currentDep = sub.depsTail;
-			if (currentDep !== undefined && currentDep.dep === dep) {
-				return;
-			}
-			const nextDep = currentDep !== undefined
-				? currentDep.nextDep
-				: sub.deps;
-			if (nextDep !== undefined && nextDep.dep === dep) {
-				sub.depsTail = nextDep;
-				return;
-			}
-			const depLastSub = dep.subsTail;
-			if (
-				depLastSub !== undefined
-				&& depLastSub.sub === sub
-				&& isValidLink(depLastSub, sub)
-			) {
-				return;
-			}
-			return linkNewDep(dep, sub, nextDep, currentDep);
-		},
-		/**
-		 * Traverses and marks subscribers starting from the provided link.
-		 *
-		 * It sets flags (e.g., Dirty, PendingComputed, PendingEffect) on each subscriber
-		 * to indicate which ones require re-computation or effect processing.
-		 * This function should be called after a signal's value changes.
-		 *
-		 * @param link - The starting link from which propagation begins.
-		 */
-		propagate(link: ILink): void {
-			// console.warn('propagate , link is ', link);
-			let targetFlag = SubscriberFlags.Dirty;
-			let subs = link;
-			let stack = 0;
+		link,
+		propagate,
+		updateDirtyFlag,
+		startTracking,
+		endTracking,
+		processEffectNotifications,
+		processComputedUpdate,
+		processPendingInnerEffects,
+	};
 
-			top: do {
-				const sub = link.sub;
-				const subFlags = sub.flags;
+	/**
+	 * Links a given dependency and subscriber if they are not already linked.
+	 *
+	 * @param dep - The dependency to be linked.
+	 * @param sub - The subscriber that depends on this dependency.
+	 * @returns The newly created link object if the two are not already linked; otherwise `undefined`.
+	 */
+	function link(dep: IDependency, sub: ISubscriber): ILink | undefined {
+		const currentDep = sub.depsTail;
+		if (currentDep !== undefined && currentDep.dep === dep) {
+			return;
+		}
+		const nextDep = currentDep !== undefined ? currentDep.nextDep : sub.deps;
+		if (nextDep !== undefined && nextDep.dep === dep) {
+			sub.depsTail = nextDep;
+			return;
+		}
+		const depLastSub = dep.subsTail;
+		if (depLastSub !== undefined && depLastSub.sub === sub && isValidLink(depLastSub, sub)) {
+			return;
+		}
+		return linkNewDep(dep, sub, nextDep, currentDep);
+	}
 
-				if (
-					(
-						!(subFlags & (SubscriberFlags.Tracking | SubscriberFlags.Recursed | SubscriberFlags.Propagated))
-						&& (sub.flags = subFlags | targetFlag | SubscriberFlags.Notified, true)
-					)
-					|| (
-						(subFlags & SubscriberFlags.Recursed)
-						&& !(subFlags & SubscriberFlags.Tracking)
-						&& (sub.flags = (subFlags & ~SubscriberFlags.Recursed) | targetFlag | SubscriberFlags.Notified, true)
-					)
-					|| (
-						!(subFlags & SubscriberFlags.Propagated)
-						&& isValidLink(link, sub)
-						&& (
-							sub.flags = subFlags | SubscriberFlags.Recursed | targetFlag | SubscriberFlags.Notified,
-							(sub as IDependency).subs !== undefined
-						)
-					)
-				) {
-					const subSubs = (sub as IDependency).subs;
-					if (subSubs !== undefined) {
-						if (subSubs.nextSub !== undefined) {
-							subSubs.prevSub = subs;
-							link = subs = subSubs;
-							targetFlag = SubscriberFlags.PendingComputed;
-							++stack;
-						} else {
-							link = subSubs;
-							targetFlag = subFlags & SubscriberFlags.Effect
-								? SubscriberFlags.PendingEffect
-								: SubscriberFlags.PendingComputed;
-						}
-						continue;
-					}
-					if (subFlags & SubscriberFlags.Effect) {
-						if (queuedEffectsTail !== undefined) {
-							if (queuedEffectsTail.depsTail) {
-								queuedEffectsTail.depsTail.nextDep = sub.deps;
-							}
-						} else {
-							queuedEffects = sub;
-						}
-						queuedEffectsTail = sub;
-					}
-				} else if (!(subFlags & (SubscriberFlags.Tracking | targetFlag))) {
-					sub.flags = subFlags | targetFlag | SubscriberFlags.Notified;
-					if ((subFlags & (SubscriberFlags.Effect | SubscriberFlags.Notified)) === SubscriberFlags.Effect) {
-						if (queuedEffectsTail !== undefined) {
-							if (queuedEffectsTail.depsTail) {
-								queuedEffectsTail.depsTail.nextDep = sub.deps;
-							}
-						} else {
-							queuedEffects = sub;
-						}
-						queuedEffectsTail = sub;
-					}
-				} else if (
-					!(subFlags & targetFlag)
-					&& (subFlags & SubscriberFlags.Propagated)
-					&& isValidLink(link, sub)
-				) {
-					sub.flags = subFlags | targetFlag;
-				}
+	/**
+	 * Traverses and marks subscribers starting from the provided link.
+	 *
+	 * It sets flags (e.g., Dirty, PendingComputed, PendingEffect) on each subscriber
+	 * to indicate which ones require re-computation or effect processing.
+	 * This function should be called after a signal's value changes.
+	 *
+	 * @param current - The starting link from which propagation begins.
+	 */
+	function propagate(current: ILink): void {
+		let next = current.nextSub;
+		let branchs: OneWayLink<ILink | undefined> | undefined;
+		let branchDepth = 0;
+		let targetFlag = SubscriberFlags.Dirty;
 
-				if ((link = subs.nextSub!) !== undefined) {
-					subs = link;
-					targetFlag = stack
-						? SubscriberFlags.PendingComputed
-						: SubscriberFlags.Dirty;
+		top: do {
+			const sub = current.sub;
+			const subFlags = sub.flags;
+
+			let shouldNotify = false;
+
+			if (!(subFlags & (SubscriberFlags.Tracking | SubscriberFlags.Recursed | SubscriberFlags.Propagated))) {
+				sub.flags = subFlags | targetFlag | SubscriberFlags.Notified;
+				shouldNotify = true;
+			} else if ((subFlags & SubscriberFlags.Recursed) && !(subFlags & SubscriberFlags.Tracking)) {
+				sub.flags = (subFlags & ~SubscriberFlags.Recursed) | targetFlag | SubscriberFlags.Notified;
+				shouldNotify = true;
+			} else if (!(subFlags & SubscriberFlags.Propagated) && isValidLink(current, sub)) {
+				sub.flags = subFlags | SubscriberFlags.Recursed | targetFlag | SubscriberFlags.Notified;
+				shouldNotify = (sub as IDependency).subs !== undefined;
+			}
+
+			if (shouldNotify) {
+				const subSubs = (sub as IDependency).subs;
+				if (subSubs !== undefined) {
+					current = subSubs;
+					if (subSubs.nextSub !== undefined) {
+						branchs = { target: next, linked: branchs };
+						++branchDepth;
+						next = current.nextSub;
+						targetFlag = SubscriberFlags.PendingComputed;
+					} else {
+						targetFlag = subFlags & SubscriberFlags.Effect
+							? SubscriberFlags.PendingEffect
+							: SubscriberFlags.PendingComputed;
+					}
 					continue;
 				}
-
-				while (stack) {
-					--stack;
-					const dep = subs.dep;
-					const depSubs = dep.subs!;
-					subs = depSubs.prevSub!;
-					depSubs.prevSub = undefined;
-					if ((link = subs.nextSub!) !== undefined) {
-						subs = link;
-						targetFlag = stack
-							? SubscriberFlags.PendingComputed
-							: SubscriberFlags.Dirty;
-						continue top;
-					}
+				if (subFlags & SubscriberFlags.Effect) {
+					notifyBuffer[notifyBufferLength++] = sub;
 				}
-
-				break;
-				// eslint-disable-next-line no-constant-condition
-			} while (true);
-		},
-		/**
-		 * Prepares the given subscriber to track new dependencies.
-		 *
-		 * It resets the subscriber's internal pointers (e.g., depsTail) and
-		 * sets its flags to indicate it is now tracking dependency links.
-		 *
-		 * @param sub - The subscriber to start tracking.
-		 */
-		startTracking(sub: ISubscriber): void {
-			sub.depsTail = undefined;
-			sub.flags = (sub.flags & ~(SubscriberFlags.Notified | SubscriberFlags.Recursed | SubscriberFlags.Propagated)) | SubscriberFlags.Tracking;
-		},
-		/**
-		 * Concludes tracking of dependencies for the specified subscriber.
-		 *
-		 * It clears or unlinks any tracked dependency information, then
-		 * updates the subscriber's flags to indicate tracking is complete.
-		 *
-		 * @param sub - The subscriber whose tracking is ending.
-		 */
-		endTracking(sub: ISubscriber): void {
-			const depsTail = sub.depsTail;
-			if (depsTail !== undefined) {
-				const nextDep = depsTail.nextDep;
-				if (nextDep !== undefined) {
-					clearTracking(nextDep);
-					depsTail.nextDep = undefined;
+			} else if (!(subFlags & (SubscriberFlags.Tracking | targetFlag))) {
+				sub.flags = subFlags | targetFlag | SubscriberFlags.Notified;
+				if ((subFlags & (SubscriberFlags.Effect | SubscriberFlags.Notified)) === SubscriberFlags.Effect) {
+					notifyBuffer[notifyBufferLength++] = sub;
 				}
-			} else if (sub.deps !== undefined) {
-				clearTracking(sub.deps);
-				sub.deps = undefined;
-			}
-			sub.flags &= ~SubscriberFlags.Tracking;
-		},
-		/**
-		 * Updates the dirty flag for the given subscriber based on its dependencies.
-		 *
-		 * If the subscriber has any pending computeds, this function sets the Dirty flag
-		 * and returns `true`. Otherwise, it clears the PendingComputed flag and returns `false`.
-		 *
-		 * @param sub - The subscriber to update.
-		 * @param flags - The current flag set for this subscriber.
-		 * @returns `true` if the subscriber is marked as Dirty; otherwise `false`.
-		 */
-		updateDirtyFlag(sub: ISubscriber, flags: SubscriberFlags): boolean {
-			if (checkDirty(sub.deps!)) {
-				sub.flags = flags | SubscriberFlags.Dirty;
-				return true;
-			} else {
-				sub.flags = flags & ~SubscriberFlags.PendingComputed;
-				return false;
-			}
-		},
-		/**
-		 * Updates the computed subscriber if necessary before its value is accessed.
-		 *
-		 * If the subscriber is marked Dirty or PendingComputed, this function runs
-		 * the provided updateComputed logic and triggers a shallowPropagate for any
-		 * downstream subscribers if an actual update occurs.
-		 *
-		 * @param computed - The computed subscriber to update.
-		 * @param flags - The current flag set for this subscriber.
-		 */
-		processComputedUpdate(computed: IDependency & ISubscriber, flags: SubscriberFlags): void {
-			if (
-				flags & SubscriberFlags.Dirty
-				|| (
-					checkDirty(computed.deps!)
-						? true
-						: (computed.flags = flags & ~SubscriberFlags.PendingComputed, false)
-				)
+			} else if (
+				!(subFlags & targetFlag)
+				&& (subFlags & SubscriberFlags.Propagated)
+				&& isValidLink(current, sub)
 			) {
-				if (updateComputed(computed)) {
-					const subs = computed.subs;
-					if (subs !== undefined) {
-						shallowPropagate(subs);
-					}
+				sub.flags = subFlags | targetFlag;
+			}
+
+			if ((current = next!) !== undefined) {
+				next = current.nextSub;
+				targetFlag = branchDepth
+					? SubscriberFlags.PendingComputed
+					: SubscriberFlags.Dirty;
+				continue;
+			}
+
+			while (branchDepth--) {
+				current = branchs!.target!;
+				branchs = branchs!.linked;
+				if (current !== undefined) {
+					next = current.nextSub;
+					targetFlag = branchDepth
+						? SubscriberFlags.PendingComputed
+						: SubscriberFlags.Dirty;
+					continue top;
 				}
 			}
-		},
-		/**
-		 * Ensures all pending internal effects for the given subscriber are processed.
-		 *
-		 * This should be called after an effect decides not to re-run itself but may still
-		 * have dependencies flagged with PendingEffect. If the subscriber is flagged with
-		 * PendingEffect, this function clears that flag and invokes `notifyEffect` on any
-		 * related dependencies marked as Effect and Propagated, processing pending effects.
-		 *
-		 * @param sub - The subscriber which may have pending effects.
-		 * @param flags - The current flags on the subscriber to check.
-		 */
-		processPendingInnerEffects(sub: ISubscriber, flags: SubscriberFlags): void {
-			if (flags & SubscriberFlags.PendingEffect) {
-				sub.flags = flags & ~SubscriberFlags.PendingEffect;
-				let link = sub.deps!;
-				do {
-					const dep = link.dep;
-					if (
-						'flags' in dep
-						&& dep.flags & SubscriberFlags.Effect
-						&& dep.flags & SubscriberFlags.Propagated
-					) {
-						notifyEffect(dep);
-					}
-					link = link.nextDep!;
-				} while (link !== undefined);
+
+			break;
+			// eslint-disable-next-line no-constant-condition
+		} while (true);
+	}
+
+	/**
+	 * Prepares the given subscriber to track new dependencies.
+	 *
+	 * It resets the subscriber's internal pointers (e.g., depsTail) and
+	 * sets its flags to indicate it is now tracking dependency links.
+	 *
+	 * @param sub - The subscriber to start tracking.
+	 */
+	function startTracking(sub: ISubscriber): void {
+		sub.depsTail = undefined;
+		sub.flags = (sub.flags & ~(SubscriberFlags.Notified | SubscriberFlags.Recursed | SubscriberFlags.Propagated)) | SubscriberFlags.Tracking;
+	}
+
+	/**
+	 * Concludes tracking of dependencies for the specified subscriber.
+	 *
+	 * It clears or unlinks any tracked dependency information, then
+	 * updates the subscriber's flags to indicate tracking is complete.
+	 *
+	 * @param sub - The subscriber whose tracking is ending.
+	 */
+	function endTracking(sub: ISubscriber): void {
+		const depsTail = sub.depsTail;
+		if (depsTail !== undefined) {
+			const nextDep = depsTail.nextDep;
+			if (nextDep !== undefined) {
+				clearTracking(nextDep);
+				depsTail.nextDep = undefined;
 			}
-		},
-		/**
-		 * Processes queued effect notifications after a batch operation finishes.
-		 *
-		 * Iterates through all queued effects, calling notifyEffect on each.
-		 * If an effect remains partially handled, its flags are updated, and future
-		 * notifications may be triggered until fully handled.
-		 */
-		processEffectNotifications(): void {
-			// console.warn('processEffectNotifications . ');
-			while (queuedEffects !== undefined) {
-				const effect = queuedEffects;
-				const depsTail = effect.depsTail!;
-				const queuedNext = depsTail.nextDep;
-				if (queuedNext !== undefined) {
-					depsTail.nextDep = undefined;
-					queuedEffects = queuedNext.sub;
-				} else {
-					queuedEffects = undefined;
-					queuedEffectsTail = undefined;
-				}
-				if (!notifyEffect(effect)) {
-					effect.flags &= ~SubscriberFlags.Notified;
+		} else if (sub.deps !== undefined) {
+			clearTracking(sub.deps);
+			sub.deps = undefined;
+		}
+		sub.flags &= ~SubscriberFlags.Tracking;
+	}
+
+	/**
+	 * Updates the dirty flag for the given subscriber based on its dependencies.
+	 *
+	 * If the subscriber has any pending computeds, this function sets the Dirty flag
+	 * and returns `true`. Otherwise, it clears the PendingComputed flag and returns `false`.
+	 *
+	 * @param sub - The subscriber to update.
+	 * @param flags - The current flag set for this subscriber.
+	 * @returns `true` if the subscriber is marked as Dirty; otherwise `false`.
+	 */
+	function updateDirtyFlag(sub: ISubscriber, flags: SubscriberFlags): boolean {
+		if (checkDirty(sub.deps!)) {
+			sub.flags = flags | SubscriberFlags.Dirty;
+			return true;
+		} else {
+			sub.flags = flags & ~SubscriberFlags.PendingComputed;
+			return false;
+		}
+	}
+
+	/**
+	 * Updates the computed subscriber if necessary before its value is accessed.
+	 *
+	 * If the subscriber is marked Dirty or PendingComputed, this function runs
+	 * the provided updateComputed logic and triggers a shallowPropagate for any
+	 * downstream subscribers if an actual update occurs.
+	 *
+	 * @param computed - The computed subscriber to update.
+	 * @param flags - The current flag set for this subscriber.
+	 */
+	function processComputedUpdate(computed: IDependency & ISubscriber, flags: SubscriberFlags): void {
+		if (flags & SubscriberFlags.Dirty || checkDirty(computed.deps!)) {
+			if (updateComputed(computed)) {
+				const subs = computed.subs;
+				if (subs !== undefined) {
+					shallowPropagate(subs);
 				}
 			}
-		},
-	};
+		} else {
+			computed.flags = flags & ~SubscriberFlags.PendingComputed;
+		}
+	}
+
+	/**
+	 * Ensures all pending internal effects for the given subscriber are processed.
+	 *
+	 * This should be called after an effect decides not to re-run itself but may still
+	 * have dependencies flagged with PendingEffect. If the subscriber is flagged with
+	 * PendingEffect, this function clears that flag and invokes `notifyEffect` on any
+	 * related dependencies marked as Effect and Propagated, processing pending effects.
+	 *
+	 * @param sub - The subscriber which may have pending effects.
+	 * @param flags - The current flags on the subscriber to check.
+	 */
+	function processPendingInnerEffects(sub: ISubscriber, flags: SubscriberFlags): void {
+		if (flags & SubscriberFlags.PendingEffect) {
+			sub.flags = flags & ~SubscriberFlags.PendingEffect;
+			let link = sub.deps!;
+			do {
+				const dep = link.dep;
+				if (
+					'flags' in dep
+					&& dep.flags & SubscriberFlags.Effect
+					&& dep.flags & SubscriberFlags.Propagated
+				) {
+					notifyEffect(dep);
+				}
+				link = link.nextDep!;
+			} while (link !== undefined);
+		}
+	}
+
+	/**
+	 * Processes queued effect notifications after a batch operation finishes.
+	 *
+	 * Iterates through all queued effects, calling notifyEffect on each.
+	 * If an effect remains partially handled, its flags are updated, and future
+	 * notifications may be triggered until fully handled.
+	 */
+	function processEffectNotifications(): void {
+		while (notifyIndex < notifyBufferLength) {
+			const effect = notifyBuffer[notifyIndex]!;
+			notifyBuffer[notifyIndex++] = undefined;
+			if (!notifyEffect(effect)) {
+				effect.flags &= ~SubscriberFlags.Notified;
+			}
+		}
+		notifyIndex = 0;
+		notifyBufferLength = 0;
+	}
+
 
 	/**
 	 * Creates and attaches a new link between the given dependency and subscriber.
@@ -363,13 +344,11 @@ notifyEffect(effect: ISubscriber): boolean;
 			prevSub: undefined,
 			nextSub: undefined,
 		};
-
 		if (depsTail === undefined) {
 			sub.deps = newLink;
 		} else {
 			depsTail.nextDep = newLink;
 		}
-
 		if (dep.subs === undefined) {
 			dep.subs = newLink;
 		} else {
@@ -377,7 +356,6 @@ notifyEffect(effect: ISubscriber): boolean;
 			newLink.prevSub = oldTail;
 			oldTail.nextSub = newLink;
 		}
-
 		sub.depsTail = newLink;
 		dep.subsTail = newLink;
 
@@ -391,19 +369,20 @@ notifyEffect(effect: ISubscriber): boolean;
 	 * subscriber in a pending state, updateComputed is called and shallowPropagate
 	 * is triggered if a value changes. Returns whether any updates occurred.
 	 *
-	 * @param link - The starting link representing a sequence of pending computeds.
-	 * @returns `true` if a computed was updated, otherwise `false`.
+	 * @param current
 	 */
-	function checkDirty(link: ILink): boolean {
-		// console.warn('checkDirty , link is ', link);
-		let stack = 0;
+	function checkDirty(current: ILink): boolean {
+		let prevLinks: OneWayLink<ILink> | undefined;
+		let checkDepth = 0;
 		let dirty: boolean;
 
 		top: do {
 			dirty = false;
-			const dep = link.dep;
+			const dep = current.dep;
 
-			if ('flags' in dep) {
+			if (current.sub.flags & SubscriberFlags.Dirty) {
+				dirty = true;
+			} else if ('flags' in dep) {
 				const depFlags = dep.flags;
 				if ((depFlags & (SubscriberFlags.Computed | SubscriberFlags.Dirty)) === (SubscriberFlags.Computed | SubscriberFlags.Dirty)) {
 					if (updateComputed(dep)) {
@@ -414,58 +393,49 @@ notifyEffect(effect: ISubscriber): boolean;
 						dirty = true;
 					}
 				} else if ((depFlags & (SubscriberFlags.Computed | SubscriberFlags.PendingComputed)) === (SubscriberFlags.Computed | SubscriberFlags.PendingComputed)) {
-					const depSubs = dep.subs!;
-					if (depSubs.nextSub !== undefined) {
-						depSubs.prevSub = link;
+					if (current.nextSub !== undefined || current.prevSub !== undefined) {
+						prevLinks = { target: current, linked: prevLinks };
 					}
-					link = dep.deps!;
-					++stack;
+					current = dep.deps!;
+					++checkDepth;
 					continue;
 				}
 			}
 
-			if (!dirty && link.nextDep !== undefined) {
-				link = link.nextDep;
+			if (!dirty && current.nextDep !== undefined) {
+				current = current.nextDep;
 				continue;
 			}
 
-			if (stack) {
-				let sub = link.sub as IDependency & ISubscriber;
-				do {
-					--stack;
-					const subSubs = sub.subs!;
-
-					if (dirty) {
-						if (updateComputed(sub)) {
-							if ((link = subSubs.prevSub!) !== undefined) {
-								subSubs.prevSub = undefined;
-								shallowPropagate(subSubs);
-								sub = link.sub as IDependency & ISubscriber;
-							} else {
-								sub = subSubs.sub as IDependency & ISubscriber;
-							}
-							continue;
+			while (checkDepth) {
+				--checkDepth;
+				const sub = current.sub as IDependency & ISubscriber;
+				const firstSub = sub.subs!;
+				if (dirty) {
+					if (updateComputed(sub)) {
+						if (firstSub.nextSub !== undefined) {
+							current = prevLinks!.target;
+							prevLinks = prevLinks!.linked;
+							shallowPropagate(firstSub);
+						} else {
+							current = firstSub;
 						}
-					} else {
-						sub.flags &= ~SubscriberFlags.PendingComputed;
+						continue;
 					}
-
-					if ((link = subSubs.prevSub!) !== undefined) {
-						subSubs.prevSub = undefined;
-						if (link.nextDep !== undefined) {
-							link = link.nextDep;
-							continue top;
-						}
-						sub = link.sub as IDependency & ISubscriber;
-					} else {
-						if ((link = subSubs.nextDep!) !== undefined) {
-							continue top;
-						}
-						sub = subSubs.sub as IDependency & ISubscriber;
-					}
-
-					dirty = false;
-				} while (stack);
+				} else {
+					sub.flags &= ~SubscriberFlags.PendingComputed;
+				}
+				if (firstSub.nextSub !== undefined) {
+					current = prevLinks!.target;
+					prevLinks = prevLinks!.linked;
+				} else {
+					current = firstSub;
+				}
+				if (current.nextDep !== undefined) {
+					current = current.nextDep;
+					continue top;
+				}
+				dirty = false;
 			}
 
 			return dirty;
@@ -488,12 +458,7 @@ notifyEffect(effect: ISubscriber): boolean;
 			if ((subFlags & (SubscriberFlags.PendingComputed | SubscriberFlags.Dirty)) === SubscriberFlags.PendingComputed) {
 				sub.flags = subFlags | SubscriberFlags.Dirty | SubscriberFlags.Notified;
 				if ((subFlags & (SubscriberFlags.Effect | SubscriberFlags.Notified)) === SubscriberFlags.Effect) {
-					if (queuedEffectsTail !== undefined) {
-						queuedEffectsTail.depsTail!.nextDep = sub.deps;
-					} else {
-						queuedEffects = sub;
-					}
-					queuedEffectsTail = sub;
+					notifyBuffer[notifyBufferLength++] = sub;
 				}
 			}
 			link = link.nextSub!;

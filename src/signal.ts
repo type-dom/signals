@@ -5,8 +5,8 @@ import { IDependency, ILink, processEffectNotifications, link, propagate } from 
 
 export function signal<T>(): Signal<T>;
 export function signal<T>(oldValue: T): Signal<T>;
-export function signal<T>(oldValue?: T): Signal<T> {
-	return new Signal(oldValue);
+export function signal<T>(initialValue?: T): Signal<T> {
+	return new Signal(initialValue);
 }
 
 export interface ISignal<T = unknown> extends IDependency {
@@ -19,10 +19,13 @@ export class Signal<T = unknown> implements ISignal<T> {
 	subs?: ILink ;
 	subsTail?: ILink;
 
-	constructor(oldValue?: T) {
-		this.currentValue = oldValue;
+	constructor(initialValue?: T) {
+		this.currentValue = initialValue;
 		// this.subs = undefined;
 		// this.subsTail = undefined;
+		// if (oldValue !== undefined) {
+		// 	this.set(oldValue);
+		// }
 	}
 
 	get() {
@@ -52,6 +55,7 @@ export class Signal<T = unknown> implements ISignal<T> {
 				// console.error('number same value, ', value);
 			} else if (isBoolean(value)) {
 				// console.error('boolean same value, ', value);
+				// this.notify();
 			} else if (isArray(value)) { // 数组的话，内部值可能变了，但是引用没变，所以触发更新
 				// todo 是否需要深度比对 ？？？
 				console.error('array, same value, ', value);
