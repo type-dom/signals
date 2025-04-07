@@ -1,35 +1,42 @@
-import { nodeResolve } from '@rollup/plugin-node-resolve'
+import babel from '@rollup/plugin-babel'
 import commonjs from '@rollup/plugin-commonjs'
+import nodeResolve from '@rollup/plugin-node-resolve'
+import terser from '@rollup/plugin-terser'
 import typescript from '@rollup/plugin-typescript'
-import { babel } from '@rollup/plugin-babel'
-import { terser } from 'rollup-plugin-terser'
 import postcss from 'rollup-plugin-postcss'
 
 export default {
     input: 'src/index.ts',
     output: [
         {
-            file: 'dist/esm/index.js',
+            file: 'dist/index.esm.js',  // 从 dist/esm/ 移动到 dist/
             format: 'esm',
             sourcemap: true
         },
         {
-            file: 'dist/cjs/index.cjs',
+            file: 'dist/index.cjs.js',  // 从 dist/cjs/ 移动到 dist/
             format: 'cjs',
             exports: 'named',
             sourcemap: true
         },
         {
-            file: 'dist/umd/index.umd.js',
+            file: 'dist/index.umd.js',  // 从 dist/umd/ 移动到 dist/
             format: 'umd',
-            name: 'MyLib',
+            name: 'CssType',
+            sourcemap: true
+        },
+        {
+            file: 'dist/index.min.js',
+            format: 'umd',
+            name: 'CssType',
+            plugins: [terser()],
             sourcemap: true
         }
     ],
     plugins: [
         nodeResolve(),
         commonjs(),
-        typescript(),
+        typescript({ tsconfig: './tsconfig.json' }),  // 显式指定 tsconfig 路径
         babel({
             babelHelpers: 'bundled',
             extensions: ['.ts'],
@@ -39,8 +46,8 @@ export default {
         postcss({
             extract: true,
             modules: true,
-            use: ['sass']
-        }),
-        terser()
-    ]
+            use: ['scss']
+        })
+    ],
+    external: id => /node_modules/.test(id) // 修正条件：仅排除 node_modules
 }
