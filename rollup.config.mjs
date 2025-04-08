@@ -3,7 +3,6 @@ import commonjs from '@rollup/plugin-commonjs'
 import nodeResolve from '@rollup/plugin-node-resolve'
 import terser from '@rollup/plugin-terser'
 import typescript from '@rollup/plugin-typescript'
-import postcss from 'rollup-plugin-postcss'
 
 export default {
     input: 'src/index.ts',
@@ -41,12 +40,6 @@ export default {
             babelHelpers: 'bundled',
             extensions: ['.ts'],
             presets: [['@babel/preset-env', { targets: '> 0.25%, not dead' }]]
-        }),
-        // 添加到plugins数组
-        postcss({
-            extract: true,
-            modules: true,
-            use: ['scss']
         })
     ],
     external: id => /node_modules/.test(id) // 修正条件：仅排除 node_modules
