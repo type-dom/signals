@@ -1,3 +1,4 @@
+import { test, expect, } from 'vitest';
 import { effect, effectScope, signal } from '../src';
 
 test('should not trigger after stop', () => {

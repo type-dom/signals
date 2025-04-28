@@ -1,3 +1,4 @@
+import { test, expect, } from 'vitest';
 import { computed, signal } from '../src';
 
 test('should correctly propagate changes through computed signals', () => {

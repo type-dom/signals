@@ -1,3 +1,4 @@
+import { test, expect } from "vitest";
 import { computed, effect, effectScope, endBatch, pauseTracking, resumeTracking, signal, startBatch } from '../src';
 
 test('should clear subscriptions when untracked by all subscribers', () => {
