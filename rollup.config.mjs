@@ -22,13 +22,13 @@ export default {
         {
             file: 'dist/index.umd.js',  // 从 dist/umd/ 移动到 dist/
             format: 'umd',
-            name: 'CssType',
+            name: 'signals',
             sourcemap: true
         },
         {
             file: 'dist/index.min.js',
             format: 'umd',
-            name: 'CssType',
+            name: 'signals',
             plugins: [terser()],
             sourcemap: true
         }
