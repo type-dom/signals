@@ -1,3 +1,4 @@
+import { test, describe, expect, } from 'vitest';
 import { computed, effect, signal } from '../src';
 
 // To give access to .toHaveBeenCalledBefore()
@@ -46,7 +47,7 @@ describe('graph updates', () => {
         const b = computed(() => a.get() - 1);
         const c = computed(() => a.get() + b.get());
 
-        const compute = jest.fn(() => 'd: ' + c.get());
+        const compute = vi.fn(() => 'd: ' + c.get());
         const d = computed(compute);
 
         // Trigger read

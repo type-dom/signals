@@ -3,7 +3,7 @@ import commonjs from '@rollup/plugin-commonjs'
 import nodeResolve from '@rollup/plugin-node-resolve'
 import terser from '@rollup/plugin-terser'
 import typescript from '@rollup/plugin-typescript'
-import postcss from 'rollup-plugin-postcss'
+import copy from 'rollup-plugin-copy'; // 导入插件
 
 export default {
     input: 'src/index.ts',
@@ -22,13 +22,13 @@ export default {
         {
             file: 'dist/index.umd.js',  // 从 dist/umd/ 移动到 dist/
             format: 'umd',
-            name: 'signals',
+            name: 'Signals',
             sourcemap: true
         },
         {
             file: 'dist/index.min.js',
             format: 'umd',
-            name: 'signals',
+            name: 'Signals',
             plugins: [terser()],
             sourcemap: true
         }
@@ -36,18 +36,17 @@ export default {
     plugins: [
         nodeResolve(),
         commonjs(),
-        typescript({ tsconfig: './tsconfig.json' }),  // 显式指定 tsconfig 路径
+        typescript({tsconfig: './tsconfig.json'}),  // 显式指定 tsconfig 路径
         babel({
             babelHelpers: 'bundled',
             extensions: ['.ts'],
-            presets: [['@babel/preset-env', { targets: '> 0.25%, not dead' }]]
+            presets: [['@babel/preset-env', {targets: '> 0.25%, not dead'}]]
         }),
-        // 添加到plugins数组
-        postcss({
-            extract: true,
-            modules: true,
-            use: ['scss']
-        })
+        copy({ // 新增配置
+            targets: [
+                {src: ['package.json', 'README.md'], dest: 'dist/'}, // 复制到 dist/ 目录
+            ],
+        }),
     ],
     external: id => /node_modules/.test(id) // 修正条件：仅排除 node_modules
 }
