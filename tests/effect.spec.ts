@@ -1,5 +1,6 @@
-import { test, expect } from "vitest";
-import { computed, effect, effectScope, endBatch, pauseTracking, resumeTracking, signal, startBatch } from '../src';
+import { test, expect } from 'vitest';
+import { computed, effect, effectScope, endBatch,
+  signal, startBatch, setCurrentSub } from '../dist';
 
 test('should clear subscriptions when untracked by all subscribers', () => {
 	let bRunTimes = 0;
@@ -35,13 +36,9 @@ test('should not run untracked inner effect', () => {
 		}
 	});
 
-	decrement();
-	decrement();
-	decrement();
-
-	function decrement() {
-		a.set(a.get() - 1);
-	}
+  a.set(2);
+  a.set(1);
+  a.set(0);
 });
 
 test('should run outer effect first', () => {
@@ -164,7 +161,7 @@ test('should custom effect support batch', () => {
 
 	const aa = computed(() => {
 		logs.push('aa-0');
-		if (a.get() === 0) {
+		if (!a.get()) {
 			b.set(1);
 		}
 		logs.push('aa-1');
@@ -192,9 +189,9 @@ test('should duplicate subscribers do not affect the notify order', () => {
 
 	effect(() => {
 		order.push('a');
-		pauseTracking();
+    const currentSub = setCurrentSub(undefined);
 		const isOne = src2.get() === 1;
-		resumeTracking();
+    setCurrentSub(currentSub);
 		if (isOne) {
 			src1.get();
 		}

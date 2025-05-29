@@ -1,52 +1,189 @@
-<p align="center">
-	<img src="assets/logo.png" width="250"><br>
-<p>
+以下是关于 [TypeDom Signals 仓库](https://github.com/type-dom/signals) 的详细说明和使用指南，基于知识库内容整理：
 
-<p align="center">
-	<a href="https://npmjs.com/package/@type-dom/signals"><img src="https://badgen.net/npm/v/@type-dom/signals" alt="npm package"></a>
-</p>
+---
 
-<h3 align="center">
-    <p>[<a href="https://github.com/YanqingXu/alien-signals-in-lua">Alien Signals in Lua</a>]</p>
-    <p>[<a href="https://github.com/medz/alien-signals-dart">Alien Signals in Dart</a>]</p>
-    <p>[<a href="https://github.com/Rajaniraiyn/react-alien-signals">React Binding</a>]</p>
-</h3>
+### **一、TypeDom Signals 简介**
+#### **1. 项目定位**
+- **核心目标**：
+    - 提供一个高性能的 **响应式信号库（Reactive Signal Library）**，用于 TypeDom 框架的状态管理和数据绑定。
+    - 基于 **Push-Pull 模型** 设计，优化内存占用和执行效率，适用于复杂业务场景。
+- **适用场景**：
+    - 需要高效状态更新的前端应用（如实时数据仪表盘、大型表单交互）。
+    - TypeDom 框架内部的状态管理模块（如组件间通信、全局状态共享）。
 
-# alien-signals
+#### **2. 核心特性**
+- **高性能设计**：
+    - 遵循严格的性能约束（如不使用 `Array/Set/Map`、避免递归调用）。
+    - 参考 [Alien Signals](https://github.com/transitive-bullshit/alien-signals) 的 Push-Pull 模型，优化依赖追踪和更新逻辑。
+- **轻量灵活**：
+    - 支持 TypeScript，提供类型定义（`.d.ts` 文件）。
+    - 模块化设计，可单独使用或与 TypeDom 框架无缝集成。
+- **开发者友好**：
+    - 提供直观的 API（如 `signal`, `computed`, `effect`）。
+    - 支持作用域管理（`effectScope`），方便清理副作用。
 
-The goal of `alien-signals` is to create a ~~push-pull~~ [push-pull-push model](https://github.com/stackblitz/alien-signals/pull/19) based signal library with the lowest overhead.
+---
 
-We have set the following constraints in scheduling logic:
+### **二、快速上手指南**
+#### **1. 安装依赖**
+```bash
+npm install @type-dom/signals
+# 或使用 pnpm/yarn
+```
 
-1. No dynamic object fields
-2. No use of Array/Set/Map
-3. No recursion calls
-4. Class properties must be fewer than 10 (https://v8.dev/blog/fast-properties)
+#### **2. 基本用法示例**
+以下是一个简单的响应式状态管理示例：
 
-Experimental results have shown that with these constraints, it is possible to achieve excellent performance for a Signal library without using sophisticated scheduling strategies. The overall performance of `alien-signals` is approximately 400% that of Vue 3.4's reactivity system.
+##### **步骤1：定义信号（Signal）**
+```typescript
+import { signal, computed, effect } from '@type-dom/signals';
 
-For more detailed performance comparisons, please visit: https://github.com/transitive-bullshit/js-reactivity-benchmark
+// 创建一个基础信号
+const count = signal(1);
 
-## Motivation
+// 创建计算属性
+const doubleCount = computed(() => count.get() * 2);
 
-To achieve high-performance code generation in https://github.com/vuejs/language-tools, I needed to write some on-demand computed logic using Signals, but I couldn't find a low-cost Signal library that satisfied me.
+// 创建副作用（自动响应数据变化）
+effect(() => {
+  console.log(`Count is: ${count.get()}`);
+});
+// 输出: Count is: 1
+```
 
-In the past, I accumulated some knowledge of reactivity systems in https://github.com/vuejs/core/pull/5912, so I attempted to develop `alien-signals` with the goal of creating a Signal library with minimal memory usage and excellent performance.
+##### **步骤2：更新信号**
+```typescript
+count.set(2);
+// 输出: Count is: 2
+console.log(doubleCount.get()); // 输出: 4
+```
 
-Since Vue 3.5 switched to a Pull reactivity system in https://github.com/vuejs/core/pull/10397, I continued to research the Push-Pull reactivity system here. It is worth mentioning that I was inspired by the doubly-linked concept, but `alien-signals` does not use a similar implementation.
+##### **步骤3：清理副作用**
+```typescript
+import { effectScope } from '@type-dom/signals';
 
-## Adoptions
+const scope = effectScope();
+scope.run(() => {
+  effect(() => {
+    console.log(`Scoped count: ${count.get()}`);
+  });
+  count.set(3); // 输出: Scoped count: 3
+});
+scope.stop();   // 停止所有副作用
+count.set(4);   // 不再输出
+```
 
-- Used in Vue language tools (https://github.com/vuejs/language-tools) for virtual code generation.
+---
 
-- The core reactivity system code was ported to Vue 3.6 and later. (https://github.com/vuejs/core/pull/12349)
+### **三、核心功能与 API**
+#### **1. 主要导出模块**
+| 模块名 | 功能描述 |
+|--------|----------|
+| `signal` | 创建可读写的响应式信号（如 `count = signal(0)`）。 |
+| `computed` | 创建基于其他信号的计算属性（自动缓存结果）。 |
+| `effect` | 创建副作用函数，自动追踪依赖并重新执行。 |
+| `effectScope` | 管理副作用的作用域，支持批量清理。 |
+
+#### **2. 关键配置与优化**
+- **依赖追踪**：
+    - 通过 `propagate` 和 `checkDirty` 函数实现非递归更新逻辑，减少调用栈开销。
+- **性能优化**：
+    - 避免动态对象字段和复杂数据结构（如 `Map`/`Set`）。
+    - 类属性数量限制在 10 以内（参考 V8 快速属性优化）。
+- **内存管理**：
+    - 使用 `effectScope.stop()` 显式清理不再需要的副作用。
+
+---
+
+### **四、与 TypeDom 框架集成**
+#### **1. 在组件中使用信号**
+```typescript
+import { TypeDiv } from '@type-dom/framework';
+import { signal, effect } from '@type-dom/signals';
+
+class Counter extends TypeDiv {
+  setup() {
+    const count = signal(0);
+    this.addChildren(
+      new Button({
+        slot: 'Click me',
+        events: {
+          click: () => count.set(count.get() + 1),
+        }
+      }),
+      new Span({
+        slot: computed(() => 'Count is: ' + count.get())
+      })
+    )
+  }
+}
+```
+
+#### **2. 全局状态管理**
+```typescript
+// store.ts
+import { signal } from '@type-dom/signals';
+export const globalState = signal({ theme: 'dark' });
+
+// component.ts
+import { globalState } from './store';
+globalState.get().theme; // 获取当前主题
+globalState.set({ theme: 'light' }); // 更新主题
+```
+
+---
+
+### **五、开发与调试建议**
+#### **1. 本地开发**
+- **启动开发服务器**：
+  ```bash
+  npm run dev
+  ```
+- **构建生产版本**：
+  ```bash
+  npm run build
+  ```
+
+#### **2. 单元测试**
+- 使用 Jest 编写测试用例：
+  ```bash
+  npm run test
+  ```
+
+#### **3. 性能监控**
+- 通过 `console.log` 或调试器检查信号更新频率。
+- 使用 Chrome DevTools 的 Performance 面板分析关键路径。
+
+---
+
+### **六、常见问题与解答**
+#### **Q1：如何避免信号更新时的无限循环？**
+- **解决方法**：
+    - 确保副作用函数中不直接修改自身依赖的信号。
+    - 使用 `effectScope` 管理副作用生命周期。
+
+#### **Q2：信号与 Vue 的 Reactive 有何区别？**
+- **对比**：
+    - TypeDom Signals 基于 Push-Pull 模型，更新逻辑更高效（参考 Alien Signals 的 400% 性能提升）。
+    - Vue 的 `reactive` 使用代理（Proxy），而 Signals 通过显式 `get/set` 管理依赖。
+
+#### **Q3：文档和社区支持**
+- **官方文档**：访问 [type-dom.github.io/signals](https://type-dom.github.io/signals) 查看完整 API 和示例。
+- **社区反馈**：
+    - 提交 Issue 或在论坛讨论：[GitHub Issues](https://github.com/type-dom/signals/issues)。
+
+---
+
+### **七、总结**
+TypeDom Signals 是一个 **高性能、轻量级的响应式状态管理库**，基于 Push-Pull 模型和严格的性能优化策略，适合需要高效更新逻辑的 TypeDom 项目。通过 `signal`, `computed`, `effect` 等 API，开发者可以轻松实现复杂的状态绑定和副作用管理。建议从基础用法（如计数器）开始实践，逐步探索作用域管理和全局状态共享等高级功能。
+
 
 ## Usage
 
-### Basic
+#### Basic APIs
 
 ```ts
-import { signal, computed, effect } from 'alien-signals';
+import { signal, computed, effect } from '@type-dom/signals';
 
 const count = signal(1);
 const doubleCount = computed(() => count.get() * 2);
@@ -62,26 +199,34 @@ count.set(2); // Console: Count is: 2
 console.log(doubleCount.get()); // 4
 ```
 
-### Effect Scope
+#### Effect Scope
 
 ```ts
-import { signal, effectScope } from 'alien-signals';
+import { signal, effect, effectScope } from '@type-dom/signals';
 
 const count = signal(1);
-const scope = effectScope();
 
-scope.run(() => {
+const stopScope = effectScope(() => {
   effect(() => {
     console.log(`Count in scope: ${count.get()}`);
   }); // Console: Count in scope: 1
-
-  count.set(2); // Console: Count in scope: 2
 });
 
-scope.stop();
+count.set(2); // Console: Count in scope: 2
+
+stopScope();
 
 count.set(3); // No console output
 ```
+
+#### Creating Your Own Surface API
+
+You can reuse alien-signals’ core algorithm via `createReactiveSystem()` to build your own signal API. For implementation examples, see:
+
+- [Starter template](https://github.com/johnsoncodehk/alien-signals-starter) (implements  `.get()` & `.set()` methods like the [Signals proposal](https://github.com/tc39/proposal-signals))
+- [stackblitz/alien-signals/src/index.ts](https://github.com/stackblitz/alien-signals/blob/master/src/index.ts)
+- [proposal-signals/signal-polyfill#44](https://github.com/proposal-signals/signal-polyfill/pull/44)
+
 
 ## About `propagate` and `checkDirty` functions
 
@@ -92,62 +237,36 @@ This results in code that is difficult to understand, and you don't necessarily 
 #### `propagate`
 
 ```ts
-function propagate(link: Link, targetFlag = SubscriberFlags.Dirty): void {
+function propagate(link: Link): void {
 	do {
 		const sub = link.sub;
-		const subFlags = sub.flags;
 
-		if (
-			(
-				!(subFlags & (SubscriberFlags.Tracking | SubscriberFlags.Recursed | SubscriberFlags.Propagated))
-				&& (sub.flags = subFlags | targetFlag | SubscriberFlags.Notified, true)
-			)
-			|| (
-				(subFlags & SubscriberFlags.Recursed)
-				&& !(subFlags & SubscriberFlags.Tracking)
-				&& (sub.flags = (subFlags & ~SubscriberFlags.Recursed) | targetFlag | SubscriberFlags.Notified, true)
-			)
-			|| (
-				!(subFlags & SubscriberFlags.Propagated)
-				&& isValidLink(link, sub)
-				&& (
-					sub.flags = subFlags | SubscriberFlags.Recursed | targetFlag | SubscriberFlags.Notified,
-					(sub as Dependency).subs !== undefined
-				)
-			)
-		) {
-			const subSubs = (sub as Dependency).subs;
-			if (subSubs !== undefined) {
-				propagate(
-					subSubs,
-					subFlags & SubscriberFlags.Effect
-						? SubscriberFlags.PendingEffect
-						: SubscriberFlags.PendingComputed
-				);
-			} else if (subFlags & SubscriberFlags.Effect) {
-				if (queuedEffectsTail !== undefined) {
-					queuedEffectsTail.depsTail!.nextDep = sub.deps;
-				} else {
-					queuedEffects = sub;
-				}
-				queuedEffectsTail = sub;
+		let flags = sub.flags;
+
+		if (flags & (ReactiveFlags.Mutable | ReactiveFlags.Watching)) {
+			if (!(flags & (ReactiveFlags.RecursedCheck | ReactiveFlags.Recursed | ReactiveFlags.Dirty | ReactiveFlags.Pending))) {
+				sub.flags = flags | ReactiveFlags.Pending;
+			} else if (!(flags & (ReactiveFlags.RecursedCheck | ReactiveFlags.Recursed))) {
+				flags = ReactiveFlags.None;
+			} else if (!(flags & ReactiveFlags.RecursedCheck)) {
+				sub.flags = (flags & ~ReactiveFlags.Recursed) | ReactiveFlags.Pending;
+			} else if (!(flags & (ReactiveFlags.Dirty | ReactiveFlags.Pending)) && isValidLink(link, sub)) {
+				sub.flags = flags | ReactiveFlags.Recursed | ReactiveFlags.Pending;
+				flags &= ReactiveFlags.Mutable;
+			} else {
+				flags = ReactiveFlags.None;
 			}
-		} else if (!(subFlags & (SubscriberFlags.Tracking | targetFlag))) {
-			sub.flags = subFlags | targetFlag | SubscriberFlags.Notified;
-			if ((subFlags & (SubscriberFlags.Effect | SubscriberFlags.Notified)) === SubscriberFlags.Effect) {
-				if (queuedEffectsTail !== undefined) {
-					queuedEffectsTail.depsTail!.nextDep = sub.deps;
-				} else {
-					queuedEffects = sub;
-				}
-				queuedEffectsTail = sub;
+
+			if (flags & ReactiveFlags.Watching) {
+				notify(sub);
 			}
-		} else if (
-			!(subFlags & targetFlag)
-			&& (subFlags & SubscriberFlags.Propagated)
-			&& isValidLink(link, sub)
-		) {
-			sub.flags = subFlags | targetFlag;
+
+			if (flags & ReactiveFlags.Mutable) {
+				const subSubs = sub.subs;
+				if (subSubs !== undefined) {
+					propagate(subSubs);
+				}
+			}
 		}
 
 		link = link.nextSub!;
@@ -158,33 +277,35 @@ function propagate(link: Link, targetFlag = SubscriberFlags.Dirty): void {
 #### `checkDirty`
 
 ```ts
-function checkDirty(link: Link): boolean {
+function checkDirty(link: Link, sub: ReactiveNode): boolean {
 	do {
 		const dep = link.dep;
-		if ('flags' in dep) {
-			const depFlags = dep.flags;
-			if ((depFlags & (SubscriberFlags.Computed | SubscriberFlags.Dirty)) === (SubscriberFlags.Computed | SubscriberFlags.Dirty)) {
-				if (updateComputed(dep)) {
+		const depFlags = dep.flags;
+
+		if (sub.flags & ReactiveFlags.Dirty) {
+			return true;
+		} else if ((depFlags & (ReactiveFlags.Mutable | ReactiveFlags.Dirty)) === (ReactiveFlags.Mutable | ReactiveFlags.Dirty)) {
+			if (update(dep)) {
+				const subs = dep.subs!;
+				if (subs.nextSub !== undefined) {
+					shallowPropagate(subs);
+				}
+				return true;
+			}
+		} else if ((depFlags & (ReactiveFlags.Mutable | ReactiveFlags.Pending)) === (ReactiveFlags.Mutable | ReactiveFlags.Pending)) {
+			if (checkDirty(dep.deps!, dep)) {
+				if (update(dep)) {
 					const subs = dep.subs!;
 					if (subs.nextSub !== undefined) {
 						shallowPropagate(subs);
 					}
 					return true;
 				}
-			} else if ((depFlags & (SubscriberFlags.Computed | SubscriberFlags.PendingComputed)) === (SubscriberFlags.Computed | SubscriberFlags.PendingComputed)) {
-				if (checkDirty(dep.deps!)) {
-					if (updateComputed(dep)) {
-						const subs = dep.subs!;
-						if (subs.nextSub !== undefined) {
-							shallowPropagate(subs);
-						}
-						return true;
-					}
-				} else {
-					dep.flags = depFlags & ~SubscriberFlags.PendingComputed;
-				}
+			} else {
+				dep.flags = depFlags & ~ReactiveFlags.Pending;
 			}
 		}
+
 		link = link.nextDep!;
 	} while (link !== undefined);
 

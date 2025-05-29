@@ -1,5 +1,5 @@
-import { test, expect, } from 'vitest';
-import { computed, signal } from '../src';
+import { test, expect } from 'vitest';
+import { computed, signal } from '../dist';
 
 test('should correctly propagate changes through computed signals', () => {
 	const src = signal(0);
@@ -42,4 +42,20 @@ test('should handle flags are indirectly updated during checkDirty', () => {
 	expect(d.get()).toBe(false);
 	a.set(true);
 	expect(d.get()).toBe(true);
+});
+
+test('should not update if the signal value is reverted', () => {
+  let times = 0;
+
+  const src = signal(0);
+  const c1 = computed(() => {
+    times++;
+    return src.get();
+  });
+  c1.get();
+  expect(times).toBe(1);
+  src.set(1);
+  src.set(0);
+  c1.get();
+  expect(times).toBe(1);
 });

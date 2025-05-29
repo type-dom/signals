@@ -1,6 +1,6 @@
-import { IPrimitive, isArray, isFunction, isObject } from '@type-dom/utils';
-import { computed, Computed } from '../computed';
-import { signal, Signal } from '../signal';
+import { isArray, isFunction, isObject } from 'lodash-es';
+import { computed, Computed, signal, Signal } from '../index';
+
 
 // If the type T accepts type "any", output type Y, otherwise output type N.
 // https://stackoverflow.com/questions/49927523/disallow-call-with-any/49928360#49928360
@@ -15,21 +15,29 @@ export type Ref<T = unknown> = Signal<T> | Computed<T>;
  * @see {@link https://vuejs.org/api/reactivity-utilities.html#isref}
  */
 export function isRef<T>(r: unknown): r is Ref<T> {
-  return  r instanceof Signal || r instanceof Computed ;
+  return r instanceof Signal || r instanceof Computed;
 }
-export function isSignal<T>(r: MaybeRef<T>): r is Signal<T> {
-  return r instanceof Signal;
+
+export function isSignal<T>(r: Signal<T> | unknown): r is Signal<T>
+export function isSignal(s: any): s is Signal {
+  return s instanceof Signal;
 }
+
 export function isComputed<T>(r: MaybeRef<T>): r is Computed<T> {
   return r instanceof Computed;
 }
+
 export type MaybeRef<T = unknown> = T | Ref<T>;
-  // | ShallowRef<T>
-  // | WritableComputedRef<T>
+// | ShallowRef<T>
+// | WritableComputedRef<T>
 // export type MaybeRef<T = any> = T | Signal<T> | Computed; // todo optimize Computed不能加 T， 否则会报错
 
 // export type MaybeRefOrGetter<T = any> = MaybeRef<T> | ComputedRef<T> | (() => T)
-export type MaybeRefOrGetter<T = unknown> = T | Signal<T> | Computed<T> | (() => T) // todo optimize Computed不能加 T， 否则会报错
+export type MaybeRefOrGetter<T = unknown> =
+  | T
+  | Signal<T>
+  | Computed<T>
+  | (() => T);
 
 /**
  * Returns the inner value if the argument is a ref, otherwise return the
@@ -50,41 +58,15 @@ export type MaybeRefOrGetter<T = unknown> = T | Signal<T> | Computed<T> | (() =>
 export function unref<T>(ref: MaybeRef<T>): T {
   return isRef(ref) ? ref.get() : ref;
 }
-// export function unref<T>(ref: MaybeRef<T>): T {
-//   if (isRef(ref)) {
-//     return ref.get()
-//   }
-//   return ref as T;
-//   //  数组/对象 在业务中自己处理
-//   // if (isArray(ref)) {
-//   //   const rawArr: any[] = []; // 不要破坏原始值
-//   //   // todo slot 会为空
-//   //   //     不变的化，class 类的监听，会改变 原始值，再次触发时会 effect 无法监听；
-//   //   ref.forEach((r) => {
-//   //     if (isRef(r)) {
-//   //       rawArr.push(unref(r));
-//   //     } else {
-//   //       rawArr.push(unref(r));
-//   //     }
-//   //   });
-//   //   return rawArr  as T;
-//   // } else if (isObject(ref)) {
-//   //   const record = {} as Record<string, unknown>;  // 不要破坏原始值
-//   //   for (const key in ref) {
-//   //     if (isRef(ref[key])) {
-//   //       record[key] = unref(ref[key])
-//   //     }
-//   //   }
-//   //   return record as T
-//   // } else {
-//   //   return ref as T
-//   // }
-// }
 
+export type ToRef<T> = IfAny<T, Ref<T>, [T] extends [Ref<T>] ? T : Ref<T>>;
 
-export type ToRef<T> = IfAny<T, Ref<T>, [T] extends [Ref<T>] ? T : Ref<T>>
+export type ToSignal<T> = IfAny<
+  T,
+  Signal<T>,
+  [T] extends [Signal] ? T : Signal<T>
+>;
 
-export type ToSignal<T> = IfAny<T, Signal<T>, [T] extends [Signal] ? T : Signal<T>>
 /**
  * Used to normalize values / refs / getters into refs.
  *
@@ -129,67 +111,63 @@ export type ToSignal<T> = IfAny<T, Signal<T>, [T] extends [Signal] ? T : Signal<
  * @see {@link https://vuejs.org/api/reactivity-utilities.html#toref}
  */
 export function toRef<T>(
-  value: T,
-): T extends () => infer R
-  ? Readonly<Ref<R>>
-  : T extends Ref<T>
-    ? T
-    : Ref<T>
+  value: T
+): T extends () => infer R ? Readonly<Ref<R>> : T extends Ref<T> ? T : Ref<T>;
+export function toRef<T extends object, K extends keyof T>(
+  object: T,
+  key: K
+): ToRef<T[K]>;
 export function toRef<T extends object, K extends keyof T>(
   object: T,
   key: K,
-): ToRef<T[K]>
-export function toRef<T extends object, K extends keyof T>(
-  object: T,
-  key: K,
-  defaultValue: T[K],
-): ToRef<Exclude<T[K], undefined>>
+  defaultValue: T[K]
+): ToRef<Exclude<T[K], undefined>>;
 
 export function toRef(
-  source: Record<string, any> | MaybeRef,
+  source: Record<string, any>,
   key?: string,
-  defaultValue?: unknown,
+  defaultValue?: unknown
 ): Ref<any> {
   if (isRef(source)) {
-    return source
+    return source;
   } else if (isFunction(source)) {
     // return new GetterRefImpl(source) as any
     return computed(source);
   } else if (isObject(source) && arguments.length > 1) {
-    return propertyToRef(source, key!, defaultValue)
+    return propertyToRef(source, key!, defaultValue);
   } else {
-    return signal(source)
+    return signal(source);
   }
 }
 
 function propertyToRef(
   source: Record<string, any>,
   key: string,
-  defaultValue?: unknown,
+  defaultValue?: unknown
 ) {
-  const val = source[key]
-  return isRef(val)
-    ? val
-    : signal(val ?? defaultValue)
+  const val = source[key];
+  return isRef(val) ? val : signal(val ?? defaultValue);
 }
 
 function propertyToSignal(
-  source: Record<string, IPrimitive | IPrimitive[]>,
+  source: Record<string, any>,
   key: string,
-  defaultValue?: unknown,
+  defaultValue?: unknown
 ) {
-  const val = source[key]
-  return signal(val ?? defaultValue)
+  const val = source[key];
+  return isRef(val)
+    ? val
+    : signal(val ?? defaultValue);
 }
 
 export type ToSignals<T = any> = {
-  [K in keyof T]: ToSignal<T[K]>
-}
+  [K in keyof T]: ToSignal<T[K]>;
+};
 
 export type ToRefs<T = any> = {
   // [K in keyof T]: ToRef<T[K]>
   [K in keyof T]: T[K] extends Ref<T[K]> ? T[K] : Ref<T[K]>;
-}
+};
 export const toSignal = propertyToSignal;
 
 /**
@@ -201,19 +179,23 @@ export const toSignal = propertyToSignal;
  * @see {@link https://vuejs.org/api/reactivity-utilities.html#torefs}
  */
 export function toRefs<T extends object>(object: T): ToRefs<T> {
-  const ret: any = isArray(object) ? new Array(object.length) : {}
+  const ret: any = isArray(object) ? new Array(object.length) : {};
   for (const key in object) {
-    ret[key] = propertyToRef(object, key)
+    ret[key] = propertyToRef(object, key);
   }
-  return ret
+  return ret;
 }
-export function toSignals<T extends Record<string, IPrimitive | IPrimitive[]>>(object: T): ToSignals<T> {
-  const ret: any = isArray(object) ? new Array(object.length) : {}
+
+export function toSignals<T extends Record<string, any>>(
+  object: T
+): ToSignals<T> {
+  const ret: any = isArray(object) ? new Array(object.length) : {};
   for (const key in object) {
-    ret[key] = propertyToSignal(object, key)
+    ret[key] = propertyToSignal(object, key);
   }
-  return ret
+  return ret;
 }
+
 /**
  * Returns the raw, original object of a Vue-created proxy.
  *
@@ -268,7 +250,6 @@ export function toRaw<T = any>(observed?: MaybeRef<T | undefined>): T {
   }
 }
 
-
 // type Primitive = string | number | boolean | bigint | symbol | undefined | null
 // export type Builtin = Primitive | Function | Date | Error | RegExp
 // export type DeepReadonly<T> = T extends Builtin
@@ -308,9 +289,9 @@ export function toRaw<T = any>(observed?: MaybeRef<T | undefined>): T {
  */
 // export interface RefUnwrapBailTypes {/*nothing*/}
 
-export declare const RawSymbol: unique symbol
+export declare const RawSymbol: unique symbol;
 
-export declare const ShallowReactiveMarker: unique symbol
+export declare const ShallowReactiveMarker: unique symbol;
 
 // export type UnwrapRef<T> =
 //   T extends ShallowRef<infer V, unknown>
@@ -345,7 +326,6 @@ export declare const ShallowReactiveMarker: unique symbol
 // // only unwrap nested ref
 // export type UnwrapNestedRefs<T> = T extends Ref ? T : UnwrapRefSimple<T>
 
-
 /**
  * Takes an object (reactive or plain) or a ref and returns a readonly proxy to
  * the original.
@@ -375,9 +355,7 @@ export declare const ShallowReactiveMarker: unique symbol
  * @param target - The source object.
  * @see {@link https://vuejs.org/api/reactivity-core.html#readonly}
  */
-export function readonly<T extends object>(
-  target: T,
-): T {
+export function readonly<T extends object>(target: T): T {
   // return createReactiveObject(
   //   target,
   //   true,
