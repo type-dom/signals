@@ -1,17 +1,21 @@
 {
-  "name": "td-vp",
+  "name": "@type-dom/signals",
   "type": "module",
-  "version": "0.0.0",
+  "version": "0.8.2",
   "description": "A starter for creating a TypeScript package.",
   "author": "Author Name <author.name@mail.com>",
   "license": "MIT",
   "homepage": "https://github.com/author/library#readme",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/author/library.git"
-  },
   "bugs": {
     "url": "https://github.com/author/library/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/type-dom/signals.git"
   },
   "exports": {
     ".": "./dist/index.mjs",
@@ -42,13 +46,5 @@
     "vite": "npm:@voidzero-dev/vite-plus-core@latest",
     "vitest": "npm:@voidzero-dev/vite-plus-test@latest"
   },
-  "packageManager": "npm@11.11.1",
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org/"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/type-dom/signals.git"
-  }
+  "packageManager": "npm@11.11.1"
 }
