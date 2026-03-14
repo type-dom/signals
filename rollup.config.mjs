@@ -9,24 +9,24 @@ export default {
     input: 'src/index.ts',
     output: [
         {
-            file: 'dist/index.esm.js',  // 从 dist/esm/ 移动到 dist/
+            file: 'dist/index.es.js',
             format: 'esm',
             sourcemap: true
         },
         {
-            file: 'dist/index.cjs.js',  // 从 dist/cjs/ 移动到 dist/
+            file: 'dist/index.cjs.js',
             format: 'cjs',
             exports: 'named',
             sourcemap: true
         },
         {
-            file: 'dist/index.umd.js',  // 从 dist/umd/ 移动到 dist/
+            file: 'dist/index.umd.js',
             format: 'umd',
             name: 'Signals',
             sourcemap: true
         },
         {
-            file: 'dist/index.min.js',
+            file: 'dist/signals.min.js',
             format: 'umd',
             name: 'Signals',
             plugins: [terser()],
@@ -36,7 +36,11 @@ export default {
     plugins: [
         nodeResolve(),
         commonjs(),
-        typescript({tsconfig: './tsconfig.json'}),  // 显式指定 tsconfig 路径
+        typescript({ 
+            tsconfig: './tsconfig.lib.json',
+            declaration: true,
+            declarationDir: 'dist'
+        }),
         babel({
             babelHelpers: 'bundled',
             extensions: ['.ts'],

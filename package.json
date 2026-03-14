@@ -1,14 +1,12 @@
 {
   "name": "@type-dom/signals",
-  "version": "0.4.0",
+  "version": "0.8.1",
   "main": "dist/index.cjs.js",
   "module": "dist/index.es.js",
   "unpkg": "dist/signals.min.js",
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "rollup -c",
-    "prepublishOnly": "npm run build",
-    "publish": "npm publish",
     "watch": "rollup -c -w",
     "test": "vitest",
     "test:coverage": "vitest --coverage",
@@ -41,9 +39,5 @@
     "vite": "^6.3.3",
     "vitepress": "^1.6.3",
     "vitest": "^3.0.0"
-  },
-  "dependencies": {
-    "@type-dom/utils": "^0.1.0",
-    "lodash": "^4.17.21"
   }
 }
