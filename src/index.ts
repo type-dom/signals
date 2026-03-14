@@ -1,92 +1,102 @@
-import { isArray, isBoolean, isNumber, isNull, isObject, isString, isUndefined, } from 'lodash-es';
 export * from './system.js';
-export * from './lib';
 
-import { createReactiveSystem, type ReactiveFlags, type ReactiveNode, type Link } from './system.js';
+import { createReactiveSystem, type Link, ReactiveFlags, type ReactiveNode } from './system.js';
 
-const enum EffectFlags {
-  Queued = 1 << 6,
-}
+const isArray = Array.isArray;
 
-interface IEffectScope extends ReactiveNode {
-  cleanups?: (() => void)[];
-}
+/**
+ * Quick object check - this is primarily used to tell
+ * objects from primitive values when we know the value
+ * is a JSON-compliant type.
+ */
+const isObject = (val: unknown): val is object => val !== null && val !== undefined && typeof val === 'object';
 
-export interface IEffect extends ReactiveNode {
+// interface IEffectScope extends ReactiveNode {
+//   cleanups?: (() => void)[];
+// }
+
+export interface EffectNode extends ReactiveNode {
   fn(): void;
 }
 
-export interface IComputed<T = any, S = T> extends ReactiveNode {
+export interface ComputedNode<T = any, S = T> extends ReactiveNode {
   value: T | undefined;
   getter: (previousValue?: S) => T;
   setter?: (newValue: S) => void;
 }
 
-interface ISignal<T = any> extends ReactiveNode {
-  previousValue?: T;
-  value?: T;
+interface SignalNode<T = any> extends ReactiveNode {
+  currentValue?: T;
+  pendingValue?: T;
 }
 
-const pauseStack: (ReactiveNode | undefined)[] = [];
-const queuedEffects: (IEffect | IEffectScope | undefined)[] = [];
+let cycle = 0;
+let batchDepth = 0;
+let notifyIndex = 0;
+let queuedLength = 0;
+let activeSub: ReactiveNode | undefined;
+
+const queued: (EffectNode | undefined)[] = [];
 const {
   link,
   unlink,
   propagate,
   checkDirty,
-  endTracking,
-  startTracking,
   shallowPropagate,
 } = createReactiveSystem({
-  update(signal: ISignal | IComputed): boolean {
+  update(node: SignalNode | ComputedNode): boolean {
     // console.warn('update signal is ', signal);
-    if ('getter' in signal) {
-      return updateComputed(signal);
+    if (node.depsTail !== undefined) {
+      return updateComputed(node as ComputedNode);
     } else {
-      return updateSignal(signal, signal.value);
+      return updateSignal(node as SignalNode);
     }
   },
-  notify,
-  unwatched(node: ISignal | IComputed | IEffect | IEffectScope) {
-    if ('getter' in node) {
-      let toRemove = node.deps;
-      if (toRemove !== undefined) {
-        node.flags = 17 as ReactiveFlags.Mutable | ReactiveFlags.Dirty;
-        do {
-          toRemove = unlink(toRemove, node);
-        } while (toRemove !== undefined);
+  notify(effect: EffectNode) {
+    let insertIndex = queuedLength;
+    let firstInsertedIndex = insertIndex;
+
+    do {
+      queued[insertIndex++] = effect;
+      effect.flags &= ~ReactiveFlags.Watching;
+      effect = effect.subs?.sub as EffectNode;
+      if (effect === undefined || !(effect.flags & ReactiveFlags.Watching)) {
+        break;
       }
-    } else if (!('previousValue' in node)) {
-      effectOper.call(node);
+      // eslint-disable-next-line no-constant-condition
+    } while (true);
+
+    queuedLength = insertIndex;
+
+    while (firstInsertedIndex < --insertIndex) {
+      const left = queued[firstInsertedIndex];
+      queued[firstInsertedIndex++] = queued[insertIndex];
+      queued[insertIndex] = left;
+    }
+  },
+  unwatched(node) {
+    if (!(node.flags & ReactiveFlags.Mutable)) {
+      effectScopeOper.call(node);
+    } else if (node.depsTail !== undefined) {
+      node.depsTail = undefined;
+      node.flags = ReactiveFlags.Mutable | ReactiveFlags.Dirty;
+      purgeDeps(node);
     }
   },
 });
 
-export let batchDepth = 0;
-
-let notifyIndex = 0;
-let queuedEffectsLength = 0;
-let activeSub: ReactiveNode | undefined;
-let activeScope: IEffectScope | undefined;
-
-export function getCurrentSub(): ReactiveNode | undefined {
+export function getActiveSub(): ReactiveNode | undefined {
   return activeSub;
 }
 
-export function setCurrentSub(sub: ReactiveNode | undefined) {
+export function setActiveSub(sub: ReactiveNode |  undefined =  undefined) {
   const prevSub = activeSub;
   activeSub = sub;
   return prevSub;
 }
 
-export function getCurrentScope(): IEffectScope | undefined {
-  return activeScope;
-}
-
-export function setCurrentScope(scope: IEffectScope | undefined) {
-  const prevScope = activeScope;
-  activeScope = scope;
-  return prevScope;
+export function getBatchDepth(): number {
+  return batchDepth;
 }
 
 export function startBatch() {
@@ -99,18 +109,30 @@ export function endBatch() {
   }
 }
 
-/**
- * @deprecated Will be removed in the next major version. Use `const pausedSub = setCurrentSub(undefined)` instead for better performance.
- */
-export function pauseTracking() {
-  pauseStack.push(setCurrentSub(undefined));
+export function getCurrentScope(): ReactiveNode | undefined {
+  return activeSub;
 }
 
-/**
- * @deprecated Will be removed in the next major version. Use `setCurrentSub(pausedSub)` instead for better performance.
- */
-export function resumeTracking() {
-  setCurrentSub(pauseStack.pop());
+export function setCurrentScope(scope: ReactiveNode | undefined) {
+  const prevScope = activeSub;
+  activeSub = scope;
+  return prevScope;
+}
+
+export function isSignal(fn: unknown): boolean {
+  return fn instanceof Signal;
+}
+
+export function isComputed(fn: unknown): boolean {
+  return fn instanceof Computed;
+}
+
+export function isEffect(fn: () => void): boolean {
+  return fn.name === 'bound effectOper';
+}
+
+export function isEffectScope(fn: () => void): boolean {
+  return fn.name === 'bound effectScopeOper';
 }
 
 export function signal<T>(): Signal<T>;
@@ -128,150 +150,175 @@ export function computed<T>(getter: (previousValue?: any) => T,
 }
 
 export function effect(fn: () => void): () => void {
-  const e: IEffect = {
+  const e: EffectNode = {
     fn,
     subs: undefined,
     subsTail: undefined,
     deps: undefined,
     depsTail: undefined,
-    flags: 2 satisfies  ReactiveFlags.Watching,
+    flags: ReactiveFlags.Watching | ReactiveFlags.RecursedCheck,
   };
-  if (activeSub !== undefined) {
-    link(e, activeSub);
-  } else if (activeScope !== undefined) {
-    link(e, activeScope);
+  const prevSub = setActiveSub(e);
+  if (prevSub !== undefined) {
+    link(e, prevSub, 0);
   }
-  const prev = setCurrentSub(e);
   try {
     e.fn();
   } finally {
-    setCurrentSub(prev);
+    activeSub = prevSub;
+    e.flags &= ~ReactiveFlags.RecursedCheck;
   }
   return effectOper.bind(e);
 }
 
 export function effectScope(fn: () => void): () => void {
-  const e: IEffectScope = {
+  const e: ReactiveNode = {
     deps: undefined,
     depsTail: undefined,
     subs: undefined,
     subsTail: undefined,
-    flags: 0 satisfies ReactiveFlags.None,
+    flags: ReactiveFlags.None,
   };
-  if (activeScope !== undefined) {
-    link(e, activeScope);
+  const prevSub = setActiveSub(e);
+  if (prevSub !== undefined) {
+    link(e, prevSub, 0);
   }
-  const prevSub = setCurrentSub(undefined);
-  const prevScope = setCurrentScope(e);
   try {
     fn();
   } finally {
-    setCurrentScope(prevScope);
-    setCurrentSub(prevSub);
+    activeSub = prevSub;
   }
-  return effectOper.bind(e);
+  return effectScopeOper.bind(e);
 }
 
-function updateComputed(c: IComputed): boolean {
+export function trigger(fn: Signal | Computed<any> | (() => void)) {
+  const sub: ReactiveNode = {
+    deps: undefined,
+    depsTail: undefined,
+    flags: ReactiveFlags.Watching,
+  };
+  const prevSub = setActiveSub(sub);
+  try {
+    if (fn instanceof Signal || fn instanceof Computed) {
+      fn.get();
+    } else {
+      fn();
+    }
+  } finally {
+    activeSub = prevSub;
+    let link = sub.deps;
+    while (link !== undefined) {
+      const dep = link.dep;
+      link = unlink(link, sub);
+      const subs = dep.subs;
+      if (subs !== undefined) {
+        sub.flags = ReactiveFlags.None;
+        propagate(subs);
+        shallowPropagate(subs);
+      }
+    }
+    if (!batchDepth) {
+      flush();
+    }
+  }
+}
+
+function updateComputed(c: ComputedNode): boolean {
   // console.warn('update computed is ', c);
-  const prevSub = setCurrentSub(c);
-  startTracking(c);
+  ++cycle;
+  c.depsTail = undefined;
+  c.flags = ReactiveFlags.Mutable | ReactiveFlags.RecursedCheck;
+  const prevSub = setActiveSub(c);
   try {
     const oldValue = c.value;
     // const value = c.value; // todo ？？？ 路由页面无法加载
-    if (isObject(oldValue)) {
-      if (oldValue instanceof Element) {
-        // 	nothing
-      } else if (oldValue instanceof Map) {
-        // console.error('Map same value, ', oldValue); // todo 无效 ？？？
-      } else {
-        // console.error('object same value, ', value);
-      }
+    if (isObject(oldValue)) { //注： 不能删除，否则 数组对象等notify失效
+      // if (oldValue instanceof Element) { // node 环境会报错
+      //   // 	nothing
+      // } else if (oldValue instanceof Map) {
+      //   // console.error('Map same value, ', oldValue); // todo 无效 ？？？
+      // } else {
+      //   // console.error('object same value, ', value);
+      // }
       c.value = c.getter(oldValue);
       return true;
     }
     return oldValue !== (c.value = c.getter(oldValue));
   } finally {
-    setCurrentSub(prevSub);
-    endTracking(c);
+    activeSub = prevSub;
+    c.flags &= ~ReactiveFlags.RecursedCheck;
+    purgeDeps(c);
   }
 }
 // todo  Map, Object
-function updateSignal(s: ISignal, value: any): boolean {
-  // console.warn('update signal is ', s);
-  s.flags = 1 satisfies ReactiveFlags.Mutable;
-  if (isObject(value)) {
-    if (value instanceof Element) {
-      // 	nothing
-    } else if (value instanceof Map) {
+function updateSignal(s: SignalNode): boolean {
+  // console.warn('updateSignal is ', s);
+  s.flags = ReactiveFlags.Mutable;
+  if (isObject(s.pendingValue)) {
+    if (typeof Element !== 'undefined' && s.pendingValue instanceof Element) {
+      //  nothing
+    } else if (s.pendingValue instanceof Map) {
       // console.error('Map same value, ', value); // todo 无效 ？？？
     } else {
       // console.error('object same value, ', value);
     }
+    s.currentValue = s.pendingValue
     return true;
   }
-  return s.previousValue !== (s.previousValue = value);
+  return s.currentValue !== (s.currentValue = s.pendingValue);
 }
 
-function notify(e: IEffect | IEffectScope) {
+function run(e: EffectNode): void {
   const flags = e.flags;
-  if (!(flags & EffectFlags.Queued)) {
-    e.flags = flags | EffectFlags.Queued;
-    const subs = e.subs;
-    if (subs !== undefined) {
-      notify(subs.sub as IEffect | IEffectScope);
-    } else {
-      queuedEffects[queuedEffectsLength++] = e;
-    }
-  }
-}
-
-function run(e: IEffect | IEffectScope, flags: ReactiveFlags): void {
   if (
-    flags & 16 satisfies ReactiveFlags.Dirty
-    || (flags & 32 satisfies ReactiveFlags.Pending && checkDirty(e.deps!, e))
+    flags & ReactiveFlags.Dirty
+    || (
+      flags & ReactiveFlags.Pending
+      && checkDirty(e.deps!, e)
+    )
   ) {
-    const prev = setCurrentSub(e);
-    startTracking(e);
+    ++cycle;
+    e.depsTail = undefined;
+    e.flags = ReactiveFlags.Watching | ReactiveFlags.RecursedCheck;
+    const prevSub = setActiveSub(e);
     try {
-      (e as IEffect).fn();
+      (e as EffectNode).fn();
     } finally {
-      setCurrentSub(prev);
-      endTracking(e);
+      activeSub = prevSub;
+      e.flags &= ~ReactiveFlags.RecursedCheck;
+      purgeDeps(e);
     }
-    return;
-  } else if (flags & 32 satisfies ReactiveFlags.Pending) {
-    e.flags = flags & ~(32 satisfies ReactiveFlags.Pending);
-  }
-  let link = e.deps;
-  while (link !== undefined) {
-    const dep = link.dep;
-    const depFlags = dep.flags;
-    if (depFlags & EffectFlags.Queued) {
-      run(dep, dep.flags = depFlags & ~EffectFlags.Queued);
-    }
-    link = link.nextDep;
+  } else {
+    e.flags = ReactiveFlags.Watching;
   }
 }
 
 function flush(): void {
-  while (notifyIndex < queuedEffectsLength) {
-    const effect = queuedEffects[notifyIndex]!;
-    queuedEffects[notifyIndex++] = undefined;
-    run(effect, effect.flags &= ~EffectFlags.Queued);
+  try {
+    while (notifyIndex < queuedLength) {
+      const effect = queued[notifyIndex]!;
+      queued[notifyIndex++] = undefined;
+      run(effect);
+    }
+  } finally {
+    while (notifyIndex < queuedLength) {
+      const effect = queued[notifyIndex]!;
+      queued[notifyIndex++] = undefined;
+      effect.flags |= ReactiveFlags.Watching | ReactiveFlags.Recursed;
+    }
+    notifyIndex = 0;
+    queuedLength = 0;
   }
-  notifyIndex = 0;
-  queuedEffectsLength = 0;
 }
 
-export class Computed<T> implements IComputed<T> {
+export class Computed<T> implements ComputedNode<T> {
   value: T | undefined;
 
   // ReactiveNode
-  deps?: Link;
-  depsTail?: Link;
   subs?: Link;
   subsTail?: Link;
+  deps?: Link;
+  depsTail?: Link;
   flags: ReactiveFlags;
 
   getter: (previousValue?: any) => T;
@@ -280,12 +327,7 @@ export class Computed<T> implements IComputed<T> {
     getter: (cachedValue?: any) => T,
     setter?: (newValue: any) => void
   ) {
-    // this.value = undefined;
-    // this.subs = undefined;
-    // this.subsTail = undefined;
-    // this.deps = undefined;
-    // this.depsTail = undefined;
-    this.flags =  17 as ReactiveFlags.Mutable | ReactiveFlags.Dirty;
+    this.flags =  0 as ReactiveFlags.None;
     this.getter = getter;
     if (setter) {
       this.setter = setter;
@@ -296,8 +338,14 @@ export class Computed<T> implements IComputed<T> {
     // console.error('Computed get . ');
     const flags = this.flags;
     if (
-      flags & 16 satisfies ReactiveFlags.Dirty
-      || (flags & 32 satisfies ReactiveFlags.Pending && checkDirty(this.deps!, this))
+      flags & ReactiveFlags.Dirty
+      || (
+        flags & ReactiveFlags.Pending
+        && (
+          checkDirty(this.deps!, this)
+          || (this.flags = flags & ~ReactiveFlags.Pending, false)
+        )
+      )
     ) {
       if (updateComputed(this)) {
         const subs = this.subs;
@@ -305,15 +353,21 @@ export class Computed<T> implements IComputed<T> {
           shallowPropagate(subs);
         }
       }
-    } else if (flags & 32 satisfies ReactiveFlags.Pending) {
-      this.flags = flags & ~(32 satisfies ReactiveFlags.Pending);
+    } else if (!flags) {
+      this.flags = ReactiveFlags.Mutable| ReactiveFlags.RecursedCheck;
+      const prevSub = setActiveSub(this);
+      try {
+        this.value = this.getter();
+      } finally {
+        activeSub = prevSub;
+        this.flags &= ~ReactiveFlags.RecursedCheck;
+      }
     }
-    if (activeSub !== undefined) {
-      link(this, activeSub);
-    } else if (activeScope !== undefined) {
-      link(this, activeScope);
+    const sub = activeSub;
+    if (sub !== undefined) {
+      link(this, sub, cycle);
     }
-    return this.value!;
+    return this.value as T;
   }
 
   // add by me 可编辑的Computed， 根据vuejs的实现
@@ -322,53 +376,46 @@ export class Computed<T> implements IComputed<T> {
     if (this.setter) {
       // 只有存在 setter 时才会有
       this.setter(value);
-      this.notify();
-    }
-  }
-  notify() {
-    // console.warn('Computed notify . ');
-    this.flags = 17 as ReactiveFlags.Mutable | ReactiveFlags.Dirty;
-    const subs = this.subs;
-    if (subs !== undefined) {
-      propagate(subs);
-      if (!batchDepth) {
-        flush();
-      }
+      trigger(this);
     }
   }
 }
 
-export class Signal<T = unknown> implements ISignal<T> {
-  previousValue: T | undefined;
-  value: T | undefined;
+export class Signal<T = unknown> implements SignalNode<T> {
+  pendingValue: T | undefined;
+  currentValue: T | undefined;
   subs?: Link;
   subsTail?: Link;
   flags: ReactiveFlags;
 
   constructor(initialValue?: T) {
     if (arguments.length) { // 需要处理 参数是 null | undefined 的情景
-      this.previousValue = initialValue;
-      this.value = initialValue;
+      this.pendingValue = initialValue;
+      this.currentValue = initialValue;
     }
     // this.subs = undefined;
     // this.subsTail = undefined;
-    this.flags = 1 satisfies ReactiveFlags.Mutable;
+    this.flags = ReactiveFlags.Mutable;
   }
 
   get() {
-    const value = this.value;
-    if (this.flags & 16 satisfies ReactiveFlags.Dirty) {
-      if (updateSignal(this, value)) {
+    if (this.flags & ReactiveFlags.Dirty) {
+      if (updateSignal(this)) {
         const subs = this.subs;
         if (subs !== undefined) {
           shallowPropagate(subs);
         }
       }
     }
-    if (activeSub !== undefined) {
-      link(this, activeSub);
+    let sub = activeSub;
+    while (sub !== undefined) {
+      if (sub.flags & (ReactiveFlags.Mutable | ReactiveFlags.Watching)) {
+        link(this, sub, cycle);
+        break;
+      }
+      sub = sub.subs?.sub;
     }
-    return value as T;
+    return this.currentValue as T;
   }
 
   /**
@@ -376,93 +423,87 @@ export class Signal<T = unknown> implements ISignal<T> {
    * 如果值跟原来一样，不会触发更新
    * todo: 优化，如果值是对象或数组这种引用类型，内部值可能变了，却没有触发更新
    *    触发更新的规则如何设定？？？
+   *    trigger 函数
    * @param value
    */
   set(value: T): void {
     // console.warn('signal set value is ', value);
-    if (this.value !== value) {
-      this.value = value
+    if (this.pendingValue !== (this.pendingValue = value)) {
       this.flags = 17 as ReactiveFlags.Mutable | ReactiveFlags.Dirty;
       const subs = this.subs;
       if (subs !== undefined) {
         propagate(subs);
+        // 如果当前正在执行 effect（即 activeSub 存在且为 Watching），立即同步 currentValue
+        // if (activeSub && (activeSub.flags & ReactiveFlags.Watching)) { // add by me follow to watch.test
+        //   if (this.flags & ReactiveFlags.Dirty) {
+        //     updateSignal(this);
+        //   }
+        // }
+        // // 如果在 flush 过程中更新信号，立即同步 currentValue 以确保一致性
+        // error toggle menus show previous menu item
+        // if (notifyIndex > 0 && queuedLength > 0) { // add by me follow to watch.test
+        //   if (this.flags & ReactiveFlags.Dirty) {
+        //     updateSignal(this);
+        //   }
+        // }
         if (!batchDepth) {
           flush();
         }
       }
     } else {
-      if (isUndefined(value)) {
+      if (typeof value === 'undefined') {
         // console.error('undefined same value, ', value);
-      } else if (isString(value)) {
+      } else if (typeof value === 'string') {
         // console.error('string same value, ', value);
-      } else if (isNumber(value)) {
+      } else if (typeof value === 'number') {
         // console.error('number same value, ', value);
-      } else if (isNull(value)) {
+      } else if (value === null) {
         // console.error('object same value, ', value);
-      }  else if (isBoolean(value)) {
+      }  else if (typeof value === 'boolean') {
         // console.error('boolean same value, ', value);
-        // this.notify();
+        // trigger(this);
       } else if (isArray(value)) {
         // 数组的话，内部值可能变了，但是引用没变，所以触发更新
         // todo 是否需要深度比对 ？？？
         // console.error('array, same value, ', value);
-        this.notify();
+        this.pendingValue = value;
+        trigger(this);
       } else if (isObject(value)) {
-        this.value = value;
+        this.pendingValue = value;
         // todo 是否需要深度比对 ？？？
-        this.notify();
-        if (value instanceof Element) {
-          // 	nothing
-        } else if (value instanceof Map) {
-          // console.error('Map same value, ', value); // todo 无效 ？？？
-        } else {
-          // console.error('object same value, ', value);
-        }
+        trigger(this);
+        // if (value instanceof Element) {
+        //   // 	nothing
+        // } else if (value instanceof Map) {
+        //   // console.error('Map same value, ', value); // todo 无效 ？？？
+        // } else {
+        //   // console.error('object same value, ', value);
+        // }
       } else {
         console.error('other type, same value, ', value, ' type is ', typeof value);
       }
     }
   }
-
-  notify() {
-    this.flags = 17 as ReactiveFlags.Mutable | ReactiveFlags.Dirty;
-    const subs = this.subs;
-    if (subs !== undefined) {
-      propagate(subs);
-      if (!batchDepth) {
-        flush();
-      }
-    }
-  }
 }
 
-function effectOper(this: IEffect | IEffectScope): void {
-  let dep = this.deps;
-  while (dep !== undefined) {
-    dep = unlink(dep, this);
-  }
+function effectOper(this: EffectNode): void {
+  effectScopeOper.call(this);
+}
+
+function effectScopeOper(this: ReactiveNode): void {
+  this.depsTail = undefined;
+  this.flags = ReactiveFlags.None;
+  purgeDeps(this);
   const sub = this.subs;
   if (sub !== undefined) {
     unlink(sub);
   }
-  this.flags = 0 satisfies ReactiveFlags.None;
 }
 
-/**
- * alien-signals 中没有这个方法，难道是移除了？
- * Registers a dispose callback on the current active effect scope. The
- * callback will be invoked when the associated effect scope is stopped.
- *
- * @param fn - The callback function to attach to the scope's cleanup.
- * @see {@link https://vuejs.org/api/reactivity-advanced.html#onscopedispose}
- */
-export function onScopeDispose(fn: () => void, failSilently = false): void {
-  if (activeScope) {
-    activeScope.cleanups?.push(fn);
-  } else if (!failSilently) {
-    console.warn(
-      `onScopeDispose() is called when there is no active effect scope` +
-      ` to be associated with.`
-    );
+function purgeDeps(sub: ReactiveNode) {
+  const depsTail = sub.depsTail;
+  let dep = depsTail !== undefined ? depsTail.nextDep : sub.deps;
+  while (dep !== undefined) {
+    dep = unlink(dep, sub);
   }
 }

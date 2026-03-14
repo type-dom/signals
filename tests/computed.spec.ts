@@ -1,9 +1,9 @@
 import { test, expect } from 'vitest';
-import { computed, signal } from '../dist';
+import { computed, signal } from '../src';
 
 test('should correctly propagate changes through computed signals', () => {
 	const src = signal(0);
-	const c1 = computed(() => src.get() % 2);
+	const c1 = computed(() => src.get()! % 2);
 	const c2 = computed(() => c1.get());
 	const c3 = computed(() => c2.get());
 

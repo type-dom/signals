@@ -1,6 +1,6 @@
 import { test, expect, describe, vi } from 'vitest';
 // To give access to .toHaveBeenCalledBefore()
-import { computed, effect, signal } from '../dist';
+import { computed, effect, signal } from '../src';
 
 import * as matchers from 'jest-extended';
 expect.extend(matchers);
@@ -43,8 +43,8 @@ describe('graph updates', () => {
         //     D
         const a = signal(2);
 
-        const b = computed(() => a.get() - 1);
-        const c = computed(() => a.get() + b.get());
+        const b = computed(() => a.get()! - 1);
+        const c = computed(() => a.get()! + b.get());
 
         const compute = vi.fn(() => 'd: ' + c.get());
         const d = computed(compute);
@@ -313,7 +313,7 @@ describe('graph updates', () => {
     test('should support lazy branches', () => {
         const a = signal(0);
         const b = computed(() => a.get());
-        const c = computed(() => (a.get() > 0 ? a.get() : b.get()));
+        const c = computed(() => (a.get()! > 0 ? a.get() : b.get()));
 
         expect(c.get()).toBe(0);
         a.set(1);

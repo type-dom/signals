@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { effect, effectScope, signal } from '../dist';
+import { effect, effectScope, signal } from '../src';
 
 test('should not trigger after stop', () => {
 	const count = signal(1);
@@ -45,4 +45,21 @@ test('should dispose inner effects if created in an effect', () => {
     source.set(3);
     expect(triggers).toBe(2);
   });
+});
+
+test('should track signal updates in an inner scope when accessed by an outer effect', () => {
+  const source = signal(1);
+
+  let triggers = 0;
+
+  effect(() => {
+    effectScope(() => {
+      source.get();
+    });
+    triggers++;
+  });
+
+  expect(triggers).toBe(1);
+  source.set(2);
+  expect(triggers).toBe(2);
 });

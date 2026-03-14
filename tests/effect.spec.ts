@@ -1,6 +1,6 @@
 import { test, expect } from 'vitest';
-import { computed, effect, effectScope, endBatch,
-  signal, startBatch, setCurrentSub } from '../dist';
+import { computed, effect, effectScope, endBatch, getActiveSub, setActiveSub, signal, startBatch } from '../src';
+import { ReactiveFlags } from '../src/system';
 
 test('should clear subscriptions when untracked by all subscribers', () => {
 	let bRunTimes = 0;
@@ -8,7 +8,7 @@ test('should clear subscriptions when untracked by all subscribers', () => {
 	const a = signal(1);
 	const b = computed(() => {
 		bRunTimes++;
-		return a.get() * 2;
+		return a.get()! * 2;
 	});
 	const stopEffect = effect(() => {
 		b.get();
@@ -24,7 +24,7 @@ test('should clear subscriptions when untracked by all subscribers', () => {
 
 test('should not run untracked inner effect', () => {
 	const a = signal(3);
-	const b = computed(() => a.get() > 0);
+	const b = computed(() => a.get()! > 0);
 
 	effect(() => {
 		if (b.get()) {
@@ -53,8 +53,7 @@ test('should run outer effect first', () => {
 					throw new Error('bad');
 				}
 			});
-		} else {
-			/* nothing */
+		} else { /* nothing */
 		}
 	});
 
@@ -66,7 +65,7 @@ test('should run outer effect first', () => {
 
 test('should not trigger inner effect when resolve maybe dirty', () => {
 	const a = signal(0);
-	const b = computed(() => a.get() % 2);
+	const b = computed(() => a.get()! % 2);
 
 	let innerTriggerTimes = 0;
 
@@ -83,64 +82,61 @@ test('should not trigger inner effect when resolve maybe dirty', () => {
 	a.set(2);
 });
 
-test('should trigger inner effects in sequence', () => {
+test('should notify inner effects in the same order as non-inner effects', () => {
 	const a = signal(0);
 	const b = signal(0);
 	const c = computed(() => a.get() - b.get());
-	const order: string[] = [];
+	const order1: string[] = [];
+	const order2: string[] = [];
+	const order3: string[] = [];
+
+	effect(() => {
+		order1.push('effect1');
+		a.get();
+	});
+	effect(() => {
+		order1.push('effect2');
+		a.get();
+		b.get();
+	});
 
 	effect(() => {
 		c.get();
-
 		effect(() => {
-			order.push('first inner');
+			order2.push('effect1');
 			a.get();
 		});
-
 		effect(() => {
-			order.push('last inner');
+			order2.push('effect2');
 			a.get();
 			b.get();
 		});
 	});
-
-	order.length = 0;
-
-	startBatch();
-	b.set(1);
-	a.set(1);
-	endBatch();
-
-	expect(order).toEqual(['first inner', 'last inner']);
-});
-
-test('should trigger inner effects in sequence in effect scope', () => {
-	const a = signal(0);
-	const b = signal(0);
-	const order: string[] = [];
 
 	effectScope(() => {
-
 		effect(() => {
-			order.push('first inner');
+			order3.push('effect1');
 			a.get();
 		});
-
 		effect(() => {
-			order.push('last inner');
+			order3.push('effect2');
 			a.get();
 			b.get();
 		});
 	});
 
-	order.length = 0;
+	order1.length = 0;
+	order2.length = 0;
+	order3.length = 0;
 
 	startBatch();
 	b.set(1);
 	a.set(1);
 	endBatch();
 
-	expect(order).toEqual(['first inner', 'last inner']);
+	expect(order1).toEqual(['effect2', 'effect1']);
+	expect(order2).toEqual(order1);
+	expect(order3).toEqual(order1);
 });
 
 test('should custom effect support batch', () => {
@@ -189,9 +185,9 @@ test('should duplicate subscribers do not affect the notify order', () => {
 
 	effect(() => {
 		order.push('a');
-    const currentSub = setCurrentSub(undefined);
+    const currentSub = setActiveSub();
 		const isOne = src2.get() === 1;
-    setCurrentSub(currentSub);
+    setActiveSub(currentSub);
 		if (isOne) {
 			src1.get();
 		}
@@ -205,7 +201,7 @@ test('should duplicate subscribers do not affect the notify order', () => {
 	src2.set(1); // src1.subs: a -> b -> a
 
 	order.length = 0;
-	src1.set(src1.get() + 1);
+	src1.set(src1.get()! + 1);
 
 	expect(order).toEqual(['a', 'b']);
 });
@@ -254,4 +250,80 @@ test('should handle flags are indirectly updated during checkDirty', () => {
 	expect(triggers).toBe(1);
 	a.set(true);
 	expect(triggers).toBe(2);
+});
+
+test('should handle effect recursion for the first execution', () => {
+  const src1 = signal(0);
+  const src2 = signal(0);
+
+  let triggers1 = 0;
+  let triggers2 = 0;
+
+  effect(() => {
+    triggers1++;
+    src1.set(Math.min(src1.get() + 1, 5));
+  });
+  effect(() => {
+    triggers2++;
+    src2.set(Math.min(src2.get() + 1, 5));
+    src2.get();
+  });
+
+  expect(triggers1).toBe(1);
+  expect(triggers2).toBe(1);
+});
+
+test('should support custom recurse effect', () => {
+  const src = signal(0);
+
+  let triggers = 0;
+
+  effect(() => {
+    getActiveSub()!.flags &= ~ReactiveFlags.RecursedCheck;
+    triggers++;
+    src.set(Math.min(src.get() + 1, 5));
+  });
+
+  expect(triggers).toBe(6);
+});
+
+test('should not execute skipped effects from previous failed flush when updating unrelated signal', () => {
+  const a = signal(0);
+  const b = signal(0);
+  const c = signal(0);
+  const d = computed(() => (c.get(), 0));
+
+  let effect3Executed = false;
+
+  effect(() => {
+    a.get();
+  });
+  effect(() => {
+    if (a.get() === 2) {
+      throw new Error('Error in effect 2');
+    }
+  });
+  effect(() => {
+    a.get();
+    d.get();
+    effect3Executed = true;
+  });
+  effect(() => {
+    b.get();
+  });
+
+  a.set(1);
+
+  effect3Executed = false;
+  try {
+    a.set(2);
+  } catch (e) {
+    expect((e as Error).message).toBe('Error in effect 2');
+  }
+
+  expect(effect3Executed).toBe(false);
+  b.set(1);
+  expect(effect3Executed).toBe(false);
+  c.set(1);
+  expect(effect3Executed).toBe(true);
 });

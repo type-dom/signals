@@ -7,6 +7,7 @@ export interface ReactiveNode {
 }
 
 export interface Link {
+  version: number;
   dep: ReactiveNode;
   sub: ReactiveNode;
   prevSub: Link | undefined;
@@ -20,14 +21,14 @@ interface Stack<T> {
   prev: Stack<T> | undefined;
 }
 
-export enum ReactiveFlags {
+export const enum ReactiveFlags {
   None = 0,
-  Mutable = 1 << 0,
-  Watching = 1 << 1,
-  RecursedCheck = 1 << 2,
-  Recursed = 1 << 3,
-  Dirty = 1 << 4,
-  Pending = 1 << 5,
+  Mutable = 1,
+  Watching = 2,
+  RecursedCheck = 4,
+  Recursed = 8,
+  Dirty = 16,
+  Pending = 32,
 }
 
 export function createReactiveSystem({
@@ -44,37 +45,29 @@ export function createReactiveSystem({
     unlink,
     propagate,
     checkDirty,
-    endTracking,
-    startTracking,
     shallowPropagate,
   };
 
-  function link(dep: ReactiveNode, sub: ReactiveNode): void {
+  function link(dep: ReactiveNode, sub: ReactiveNode, version: number): void {
     const prevDep = sub.depsTail;
     if (prevDep !== undefined && prevDep.dep === dep) {
       return;
     }
-    let nextDep: Link | undefined = undefined;
-    const recursedCheck = sub.flags & 4 satisfies ReactiveFlags.RecursedCheck;
-    if (recursedCheck) {
-      nextDep = prevDep !== undefined ? prevDep.nextDep : sub.deps;
-      if (nextDep !== undefined && nextDep.dep === dep) {
-        sub.depsTail = nextDep;
-        return;
-      }
+    const nextDep = prevDep !== undefined ? prevDep.nextDep : sub.deps;
+    if (nextDep !== undefined && nextDep.dep === dep) {
+      nextDep.version = version;
+      sub.depsTail = nextDep;
+      return;
     }
     const prevSub = dep.subsTail;
-    if (
-      prevSub !== undefined
-      && prevSub.sub === sub
-      && (!recursedCheck || isValidLink(prevSub, sub))
-    ) {
+    if (prevSub !== undefined && prevSub.version === version && prevSub.sub === sub) {
       return;
     }
     const newLink
       = sub.depsTail
       = dep.subsTail
       = {
+      version,
       dep,
       sub,
       prevDep,
@@ -132,37 +125,34 @@ export function createReactiveSystem({
 
     top: do {
       const sub = link.sub;
-
       let flags = sub.flags;
 
-      if (flags & 3 as ReactiveFlags.Mutable | ReactiveFlags.Watching) {
-        if (!(flags & 60 as ReactiveFlags.RecursedCheck | ReactiveFlags.Recursed | ReactiveFlags.Dirty | ReactiveFlags.Pending)) {
-          sub.flags = flags | 32 satisfies ReactiveFlags.Pending;
-        } else if (!(flags & 12 as ReactiveFlags.RecursedCheck | ReactiveFlags.Recursed)) {
-          flags = 0 satisfies ReactiveFlags.None;
-        } else if (!(flags & 4 satisfies ReactiveFlags.RecursedCheck)) {
-          sub.flags = (flags & ~(8 satisfies ReactiveFlags.Recursed)) | 32 satisfies ReactiveFlags.Pending;
-        } else if (!(flags & 48 as ReactiveFlags.Dirty | ReactiveFlags.Pending) && isValidLink(link, sub)) {
-          sub.flags = flags | 40 as ReactiveFlags.Recursed | ReactiveFlags.Pending;
-          flags &= 1 satisfies ReactiveFlags.Mutable;
-        } else {
-          flags = 0 satisfies ReactiveFlags.None;
-        }
+      if (!(flags & (ReactiveFlags.RecursedCheck | ReactiveFlags.Recursed | ReactiveFlags.Dirty | ReactiveFlags.Pending))) {
+        sub.flags = flags | ReactiveFlags.Pending;
+      } else if (!(flags & (ReactiveFlags.RecursedCheck | ReactiveFlags.Recursed))) {
+        flags = ReactiveFlags.None;
+      } else if (!(flags & ReactiveFlags.RecursedCheck)) {
+        sub.flags = (flags & ~ReactiveFlags.Recursed) | ReactiveFlags.Pending;
+      } else if (!(flags & (ReactiveFlags.Dirty | ReactiveFlags.Pending)) && isValidLink(link, sub)) {
+        sub.flags = flags | (ReactiveFlags.Recursed | ReactiveFlags.Pending);
+        flags &= ReactiveFlags.Mutable;
+      } else {
+        flags = ReactiveFlags.None;
+      }
 
-        if (flags & 2 satisfies ReactiveFlags.Watching) {
-          notify(sub);
-        }
+      if (flags & ReactiveFlags.Watching) {
+        notify(sub);
+      }
 
-        if (flags & 1 satisfies ReactiveFlags.Mutable) {
-          const subSubs = sub.subs;
-          if (subSubs !== undefined) {
-            link = subSubs;
-            if (subSubs.nextSub !== undefined) {
-              stack = { value: next, prev: stack };
-              next = link.nextSub;
-            }
-            continue;
+      if (flags & ReactiveFlags.Mutable) {
+        const subSubs = sub.subs;
+        if (subSubs !== undefined) {
+          const nextSub = (link = subSubs).nextSub;
+          if (nextSub !== undefined) {
+            stack = { value: next, prev: stack };
+            next = nextSub;
           }
+          continue;
         }
       }
 
@@ -181,37 +171,21 @@ export function createReactiveSystem({
       }
 
       break;
-      // eslint-disable-next-line no-constant-condition
     } while (true);
-  }
-
-  function startTracking(sub: ReactiveNode): void {
-    sub.depsTail = undefined;
-    sub.flags = (sub.flags & ~(56 as ReactiveFlags.Recursed | ReactiveFlags.Dirty | ReactiveFlags.Pending)) | 4 satisfies ReactiveFlags.RecursedCheck;
-  }
-
-  function endTracking(sub: ReactiveNode): void {
-    const depsTail = sub.depsTail;
-    let toRemove = depsTail !== undefined ? depsTail.nextDep : sub.deps;
-    while (toRemove !== undefined) {
-      toRemove = unlink(toRemove, sub);
-    }
-    sub.flags &= ~(4 satisfies ReactiveFlags.RecursedCheck);
   }
 
   function checkDirty(link: Link, sub: ReactiveNode): boolean {
     let stack: Stack<Link> | undefined;
     let checkDepth = 0;
+    let dirty = false;
 
     top: do {
       const dep = link.dep;
-      const depFlags = dep.flags;
+      const flags = dep.flags;
 
-      let dirty = false;
-
-      if (sub.flags & 16 satisfies ReactiveFlags.Dirty) {
+      if (sub.flags & ReactiveFlags.Dirty) {
         dirty = true;
-      } else if ((depFlags & 17 as ReactiveFlags.Mutable | ReactiveFlags.Dirty) === 17 as ReactiveFlags.Mutable | ReactiveFlags.Dirty) {
+      } else if ((flags & (ReactiveFlags.Mutable | ReactiveFlags.Dirty)) === (ReactiveFlags.Mutable | ReactiveFlags.Dirty)) {
         if (update(dep)) {
           const subs = dep.subs!;
           if (subs.nextSub !== undefined) {
@@ -219,7 +193,7 @@ export function createReactiveSystem({
           }
           dirty = true;
         }
-      } else if ((depFlags & 33 as ReactiveFlags.Mutable | ReactiveFlags.Pending) === 33 as ReactiveFlags.Mutable | ReactiveFlags.Pending) {
+      } else if ((flags & (ReactiveFlags.Mutable | ReactiveFlags.Pending)) === (ReactiveFlags.Mutable | ReactiveFlags.Pending)) {
         if (link.nextSub !== undefined || link.prevSub !== undefined) {
           stack = { value: link, prev: stack };
         }
@@ -229,13 +203,15 @@ export function createReactiveSystem({
         continue;
       }
 
-      if (!dirty && link.nextDep !== undefined) {
-        link = link.nextDep;
-        continue;
+      if (!dirty) {
+        const nextDep = link.nextDep;
+        if (nextDep !== undefined) {
+          link = nextDep;
+          continue;
+        }
       }
 
-      while (checkDepth) {
-        --checkDepth;
+      while (checkDepth--) {
         const firstSub = sub.subs!;
         const hasMultipleSubs = firstSub.nextSub !== undefined;
         if (hasMultipleSubs) {
@@ -252,50 +228,42 @@ export function createReactiveSystem({
             sub = link.sub;
             continue;
           }
+          dirty = false;
         } else {
-          sub.flags &= ~(32 satisfies ReactiveFlags.Pending);
+          sub.flags &= ~ReactiveFlags.Pending;
         }
         sub = link.sub;
-        if (link.nextDep !== undefined) {
-          link = link.nextDep;
+        const nextDep = link.nextDep;
+        if (nextDep !== undefined) {
+          link = nextDep;
           continue top;
         }
-        dirty = false;
       }
 
       return dirty;
-      // eslint-disable-next-line no-constant-condition
     } while (true);
   }
 
   function shallowPropagate(link: Link): void {
     do {
       const sub = link.sub;
-      const nextSub = link.nextSub;
-      const subFlags = sub.flags;
-      if ((subFlags & 48 as ReactiveFlags.Pending | ReactiveFlags.Dirty) === 32 satisfies ReactiveFlags.Pending) {
-        sub.flags = subFlags | 16 satisfies ReactiveFlags.Dirty;
-        if (subFlags & 2 satisfies ReactiveFlags.Watching) {
+      const flags = sub.flags;
+      if ((flags & (ReactiveFlags.Pending | ReactiveFlags.Dirty)) === ReactiveFlags.Pending) {
+        sub.flags = flags | ReactiveFlags.Dirty;
+        if ((flags & (ReactiveFlags.Watching | ReactiveFlags.RecursedCheck)) === ReactiveFlags.Watching) {
           notify(sub);
         }
       }
-      link = nextSub!;
-    } while (link !== undefined);
+    } while ((link = link.nextSub!) !== undefined);
   }
 
   function isValidLink(checkLink: Link, sub: ReactiveNode): boolean {
-    const depsTail = sub.depsTail;
-    if (depsTail !== undefined) {
-      let link = sub.deps!;
-      do {
-        if (link === checkLink) {
-          return true;
-        }
-        if (link === depsTail) {
-          break;
-        }
-        link = link.nextDep!;
-      } while (link !== undefined);
+    let link = sub.depsTail;
+    while (link !== undefined) {
+      if (link === checkLink) {
+        return true;
+      }
+      link = link.prevDep;
     }
     return false;
   }
