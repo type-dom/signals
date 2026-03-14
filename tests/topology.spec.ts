@@ -1,9 +1,8 @@
-import { test, describe, expect, } from 'vitest';
-import { computed, effect, signal } from '../src';
-
+import { test, expect, describe, vi } from 'vitest';
 // To give access to .toHaveBeenCalledBefore()
-import * as matchers from 'jest-extended';
+import { computed, effect, signal } from '../dist';
 
+import * as matchers from 'jest-extended';
 expect.extend(matchers);
 
 /** Tests adopted with thanks from preact-signals implementation at
@@ -73,7 +72,7 @@ describe('graph updates', () => {
         const b = computed(() => a.get());
         const c = computed(() => a.get());
 
-        const spy = jest.fn(() => b.get() + ' ' + c.get());
+        const spy = vi.fn(() => b.get() + ' ' + c.get());
         const d = computed(spy);
 
         expect(d.get()).toBe('a a');
@@ -100,7 +99,7 @@ describe('graph updates', () => {
 
         const d = computed(() => b.get() + ' ' + c.get());
 
-        const spy = jest.fn(() => d.get());
+        const spy = vi.fn(() => d.get());
         const e = computed(spy);
 
         expect(e.get()).toBe('a a');
@@ -120,7 +119,7 @@ describe('graph updates', () => {
             return 'foo';
         });
 
-        const spy = jest.fn(() => b.get());
+        const spy = vi.fn(() => b.get());
         const c = computed(spy);
 
         expect(c.get()).toBe('foo');
@@ -149,12 +148,12 @@ describe('graph updates', () => {
 
         const d = computed(() => c.get());
 
-        const eSpy = jest.fn(() => b.get() + ' ' + d.get());
+        const eSpy = vi.fn(() => b.get() + ' ' + d.get());
         const e = computed(eSpy);
 
-        const fSpy = jest.fn(() => e.get());
+        const fSpy = vi.fn(() => e.get());
         const f = computed(fSpy);
-        const gSpy = jest.fn(() => e.get());
+        const gSpy = vi.fn(() => e.get());
         const g = computed(gSpy);
 
         expect(f.get()).toBe('a a');
@@ -206,7 +205,7 @@ describe('graph updates', () => {
         const a = signal('a');
 
         const b = computed(() => a.get());
-        const spy = jest.fn(() => a.get());
+        const spy = vi.fn(() => a.get());
         computed(spy);
 
         expect(b.get()).toBe('a');
@@ -227,10 +226,10 @@ describe('graph updates', () => {
         //  |
         // *C
         const a = signal('a');
-        const spyB = jest.fn(() => a.get());
+        const spyB = vi.fn(() => a.get());
         const b = computed(spyB);
 
-        const spyC = jest.fn(() => b.get());
+        const spyC = vi.fn(() => b.get());
         const c = computed(spyC);
 
         const d = computed(() => a.get());
@@ -270,7 +269,7 @@ describe('graph updates', () => {
             a.get();
             return 'c';
         });
-        const spy = jest.fn(() => b.get() + ' ' + c.get());
+        const spy = vi.fn(() => b.get() + ' ' + c.get());
         const d = computed(spy);
 
         expect(d.get()).toBe('a c');
@@ -300,7 +299,7 @@ describe('graph updates', () => {
             a.get();
             return 'd';
         });
-        const spy = jest.fn(() => b.get() + ' ' + c.get() + ' ' + d.get());
+        const spy = vi.fn(() => b.get() + ' ' + c.get() + ' ' + d.get());
         const e = computed(spy);
 
         expect(e.get()).toBe('a c d');
@@ -341,7 +340,7 @@ describe('graph updates', () => {
             a.get();
             return 'c';
         });
-        const spy = jest.fn(() => b.get() + ' ' + c.get());
+        const spy = vi.fn(() => b.get() + ' ' + c.get());
         const d = computed(spy);
 
         expect(d.get()).toBe('b c');

@@ -1,8 +1,8 @@
+export *  from './watch';
+export { watchO } from './watch.back';
 export { reaction } from './reaction';
-export * from './watch';
-
 export * from './ref';
-
+export type { MaybeRef, Ref, IfAny, MaybeRefOrGetter, ToRef, ToRefs, ToSignal, ToSignals  } from './ref';
 
 /**
  * Marks an object so that it will never be converted to a proxy. Returns the

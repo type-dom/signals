@@ -1,15 +1,86 @@
-import { computed, pauseTracking, resumeTracking, signal } from '../src';
+import { expect, test } from 'vitest';
+import { computed, effect, effectScope, setCurrentSub, signal } from '../dist';
 
-test('should pause tracking', () => {
-	const src = signal(0);
-	const c = computed(() => {
-		pauseTracking();
-		const value = src.get();
-		resumeTracking();
-		return value;
-	});
-	expect(c.get()).toBe(0);
+test('should pause tracking in computed', () => {
+  const src = signal(0);
 
-	src.set(1);
-	expect(c.get()).toBe(0);
+  let computedTriggerTimes = 0;
+  const c = computed(() => {
+    computedTriggerTimes++;
+    const currentSub = setCurrentSub(undefined);
+    const value = src.get();
+    setCurrentSub(currentSub);
+    return value;
+  });
+
+  expect(c.get()).toBe(0);
+  expect(computedTriggerTimes).toBe(1);
+
+  src.set(1);
+  src.set(2);
+  src.set(3);
+  expect(c.get()).toBe(0);
+  expect(computedTriggerTimes).toBe(1);
+});
+
+test('should pause tracking in effect', () => {
+  const src = signal(0);
+  const is = signal(0);
+
+  let effectTriggerTimes = 0;
+  effect(() => {
+    effectTriggerTimes++;
+    if (is.get()) {
+      const currentSub = setCurrentSub(undefined);
+      src.get();
+      setCurrentSub(currentSub);
+    }
+  });
+
+  expect(effectTriggerTimes).toBe(1);
+
+  is.set(1);
+  expect(effectTriggerTimes).toBe(2);
+
+  src.set(1);
+  src.set(2)
+  src.set(3);
+  expect(effectTriggerTimes).toBe(2);
+
+  is.set(2);
+  expect(effectTriggerTimes).toBe(3);
+
+  src.set(4);
+  src.set(5);
+  src.set(6);
+  expect(effectTriggerTimes).toBe(3);
+
+  is.set(0);
+  expect(effectTriggerTimes).toBe(4);
+
+  src.set(7);
+  src.set(8);
+  src.set(9);
+  expect(effectTriggerTimes).toBe(4);
+});
+
+test('should pause tracking in effect scope', () => {
+  const src = signal(0);
+
+  let effectTriggerTimes = 0;
+  effectScope(() => {
+    effect(() => {
+      effectTriggerTimes++;
+      const currentSub = setCurrentSub(undefined);
+      src.get();
+      setCurrentSub(currentSub);
+    });
+  });
+
+  expect(effectTriggerTimes).toBe(1);
+
+  src.set(1);
+  src.set(2);
+  src.set(3);
+  expect(effectTriggerTimes).toBe(1);
 });
