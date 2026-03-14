@@ -8,4 +8,7 @@ export default defineConfig({
   },
   pack: tsdownConfig,
   lint: {"options":{"typeAware":true,"typeCheck":true}},
+  test: {
+    globals: true,
+  },
 });
